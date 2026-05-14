@@ -2,6 +2,7 @@ import requests
 import psycopg2
 import psycopg2.extras
 import time
+import os
 
 GRAPHQL_URL = "https://www.ratemyprofessors.com/graphql"
 HEADERS = {
@@ -20,7 +21,7 @@ PROF_BATCH_SIZE = 1000
 RATINGS_BATCH_SIZE = 1000
 MAX_RETRIES = 3
 RETRY_DELAY = 2
-DB_URL = "postgresql://localhost/uw_professors"
+DB_URL = os.environ["DATABASE_URL"]
 
 def init_db(conn):
     cur = conn.cursor()
@@ -116,7 +117,7 @@ def fetch_ratings_batch(professor_ids):
     return post_with_retry(f"query {{ {aliases} }}")
 
 # --- Main ---
-conn = psycopg2.connect(DB_URL)
+conn = psycopg2.connect(DB_URL, sslmode="require")
 init_db(conn)
 
 for school in SCHOOLS:

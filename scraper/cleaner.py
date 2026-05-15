@@ -112,7 +112,6 @@ def main():
     # Full rebuild: truncate processed tables before repopulating from raw data
     plain_cur = conn.cursor()
     plain_cur.execute("TRUNCATE professors, cec_evaluations RESTART IDENTITY CASCADE")
-    conn.commit()
     plain_cur.close()
 
     print("Reading raw data...")
@@ -191,7 +190,6 @@ def main():
             "departments":    json.dumps(unique_depts),
         }
 
-    conn.commit()
     plain_cur.close()
 
     same_school = sum(1 for g in dup_groups if len(set(g["school_ids"])) == 1)
@@ -252,7 +250,6 @@ def main():
         winner_overrides.get(p["id"], {}).get("would_take_again", p["would_take_again"]),
         p["updated_at"], *compute_derived(get_all_ratings(p["id"])), "rmp"
     ) for p in rmp_profs])
-    conn.commit()
     plain_cur.close()
     print(f"  Inserted {len(rmp_profs):,} professors from RMP")
 
@@ -326,7 +323,6 @@ def main():
             cec_name_to_prof_id[name] = row[0]
             new_profs += 1
 
-    conn.commit()
     plain_cur.close()
     print(f"  Exact matches:  {exact_matches:,}")
     print(f"  Fuzzy matches:  {fuzzy_matches:,}")
@@ -359,7 +355,6 @@ def main():
             quarter = EXCLUDED.quarter,
             year = EXCLUDED.year
     """, rows)
-    conn.commit()
     plain_cur.close()
     print(f"  Linked {len(rows):,} evaluations")
 
@@ -386,9 +381,10 @@ def main():
             "UPDATE professors SET title = %s WHERE id = %s",
             (title, prof_id)
         )
-    conn.commit()
     plain_cur.close()
     print(f"  Updated titles for {len(best):,} professors")
+
+    conn.commit()
 
     # ── Summary ──
     cur.execute("SELECT COUNT(*) FROM professors")

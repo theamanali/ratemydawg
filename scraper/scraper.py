@@ -248,15 +248,14 @@ def main():
                         VALUES %s
                         ON CONFLICT (id) DO NOTHING
                     """, new_ratings)
-                    inserted = cur.rowcount
                     conn.commit()
                     cur.close()
                     elapsed = time.time() - start
-                    total_ratings += inserted
-                    print(f"  Batch {batch_num}/{total_batches}: {inserted} new ratings in {elapsed:.2f}s (total: {total_ratings})")
+                    total_ratings += len(new_ratings)
+                    print(f"  Batch {batch_num}/{total_batches}: {len(new_ratings)} ratings in {elapsed:.2f}s (total: {total_ratings})")
                     time.sleep(0.5)
 
-                print(f"  Done: Inserted {total_ratings} new rating(s) across {len(changed_prof_ids)} professor(s)")
+                print(f"  Done: Processed {total_ratings} rating(s) across {len(changed_prof_ids)} professor(s)")
 
     finally:
         conn.close()

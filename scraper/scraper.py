@@ -122,22 +122,26 @@ def fetch_ratings_batch(professor_ids):
     ])
     return post_with_retry(f"query {{ {aliases} }}")
 
+GRADE_KEYS = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F", "Rather not say", "Not sure yet"]
+
 def compute_professor_derived(ratings):
     if not ratings:
         return (
-            json.dumps({}), json.dumps({"1":0,"2":0,"3":0,"4":0,"5":0}),
+            json.dumps({g: 0 for g in GRADE_KEYS}),
+            json.dumps({"1":0,"2":0,"3":0,"4":0,"5":0}),
             json.dumps({"1":0,"2":0,"3":0,"4":0,"5":0}),
             json.dumps([]),
         )
 
-    grade_counts = {}
+    grade_counts = {g: 0 for g in GRADE_KEYS}
     rating_counts = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0}
     diff_counts = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0}
     course_counts = {}
 
     for r in ratings:
-        g = r["grade"] if r["grade"] else "N/A"
-        grade_counts[g] = grade_counts.get(g, 0) + 1
+        g = r["grade"] if r["grade"] in grade_counts else None
+        if g:
+            grade_counts[g] += 1
 
         hr = r["helpful_rating"]
         if hr and 1 <= hr <= 5:

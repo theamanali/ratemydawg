@@ -185,8 +185,8 @@ def get_professor(professor_id: str):
 @app.get("/professors/{professor_id}/ratings")
 def get_ratings(
     professor_id: str,
-    limit: int = Query(50),
-    offset: int = Query(0),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
 ):
     with db_cursor() as cur:
         cur.execute("SELECT id FROM professors WHERE id = %s", (professor_id,))

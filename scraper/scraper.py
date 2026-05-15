@@ -146,50 +146,42 @@ def compute_professor_derived(ratings):
             json.dumps([]), json.dumps([]), None, None,
         )
 
-    # grade_distribution
     grade_counts = {}
+    rating_counts = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0}
+    diff_counts = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0}
+    course_counts = {}
+    word_counts = {}
+    mandatory = 0
+    online = 0
+
     for r in ratings:
         g = r["grade"] if r["grade"] else "N/A"
         grade_counts[g] = grade_counts.get(g, 0) + 1
 
-    # rating_distribution (helpful_rating 1-5)
-    rating_counts = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0}
-    for r in ratings:
         hr = r["helpful_rating"]
         if hr and 1 <= hr <= 5:
             rating_counts[str(hr)] += 1
 
-    # difficulty_distribution
-    diff_counts = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0}
-    for r in ratings:
         dr = r["difficulty_rating"]
         if dr and 1 <= dr <= 5:
             diff_counts[str(dr)] += 1
 
-    # courses
-    course_counts = {}
-    for r in ratings:
         c = (r["class"] or "").strip()
         if c:
             course_counts[c] = course_counts.get(c, 0) + 1
-    courses_list = [{"code": k, "count": v} for k, v in course_counts.items()]
 
-    # common_tags
-    word_counts = {}
-    for r in ratings:
-        comment = r["comment"] or ""
-        words = re.findall(r"[a-z]+(?:'[a-z]+)?", comment.lower())
-        for w in words:
+        for w in re.findall(r"[a-z]+(?:'[a-z]+)?", (r["comment"] or "").lower()):
             if w not in STOP_WORDS and len(w) >= 4:
                 word_counts[w] = word_counts.get(w, 0) + 1
+
+        if r["attendance_mandatory"]:
+            mandatory += 1
+        if r["is_online"]:
+            online += 1
+
+    courses_list = [{"code": k, "count": v} for k, v in course_counts.items()]
     top_tags = sorted(word_counts, key=lambda w: word_counts[w], reverse=True)[:20]
-
-    # attendance_mandatory_pct
-    mandatory = sum(1 for r in ratings if r["attendance_mandatory"])
     attendance_pct = round(mandatory / len(ratings) * 100, 2)
-
-    # online_pct
-    online = sum(1 for r in ratings if r["is_online"])
     online_pct = round(online / len(ratings) * 100, 2)
 
     return (
@@ -225,18 +217,35 @@ for school in SCHOOLS:
     cursor = None
     page = 1
     while True:
+        start = time.time()
         data = fetch_professors_page(school["id"], cursor)
+        elapsed = time.time() - start
         if not data:
             print("  Failed to fetch page, aborting")
             break
         batch = [e["node"] for e in data["edges"]]
         professors.extend(batch)
-        print(f"  Page {page}: {len(batch)} professors (total: {len(professors)})")
+        print(f"  Page {page}: {len(batch)} professors (total: {len(professors)}) in {elapsed:.2f}s")
         if not data["pageInfo"]["hasNextPage"]:
             break
         cursor = data["pageInfo"]["endCursor"]
         page += 1
         time.sleep(0.5)
+
+    # Check which professors have new ratings by comparing num_ratings with DB
+    prof_ids_with_ratings = [p["id"] for p in professors if p["numRatings"] > 0]
+    changed_prof_ids = set()
+    if prof_ids_with_ratings:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, num_ratings FROM professors WHERE id = ANY(%s)",
+            (prof_ids_with_ratings,)
+        )
+        existing = {row[0]: row[1] for row in cur.fetchall()}
+        cur.close()
+        for p in professors:
+            if p["numRatings"] > 0 and existing.get(p["id"]) != p["numRatings"]:
+                changed_prof_ids.add(p["id"])
 
     cur = conn.cursor()
     psycopg2.extras.execute_values(cur, """
@@ -255,11 +264,11 @@ for school in SCHOOLS:
     ) for p in professors])
     conn.commit()
     cur.close()
-    print(f"  Saved {len(professors)} professors")
+    print(f"  Saved {len(professors)} professors ({len(changed_prof_ids)} with new ratings)")
 
-    # Step 2: fetch all ratings
+    # Step 2: fetch ratings only for professors with new ratings
     print("Step 2: Fetching ratings...")
-    ids = [p["id"] for p in professors if p["numRatings"] > 0]
+    ids = [p["id"] for p in professors if p["id"] in changed_prof_ids]
     total_ratings = 0
     total_batches = (len(ids) + RATINGS_BATCH_SIZE - 1) // RATINGS_BATCH_SIZE
 
@@ -269,7 +278,6 @@ for school in SCHOOLS:
 
         start = time.time()
         data = fetch_ratings_batch(batch_ids)
-        elapsed = time.time() - start
 
         if not data:
             print(f"  Batch {batch_num}/{total_batches}: SKIPPED after retries")
@@ -300,47 +308,62 @@ for school in SCHOOLS:
         """, ratings)
         conn.commit()
         cur.close()
+        elapsed = time.time() - start
         total_ratings += len(ratings)
         print(f"  Batch {batch_num}/{total_batches}: {len(ratings)} ratings in {elapsed:.2f}s (total: {total_ratings})")
         time.sleep(0.5)
 
     print(f"  Done: {len(professors)} professors, {total_ratings} ratings")
 
-    # Step 3: compute derived columns per professor
+    # Step 3: compute derived columns for professors with new ratings only
     print("Step 3: Computing derived professor columns...")
-    cur = conn.cursor()
-    cur.execute("SELECT id FROM professors WHERE school_id = %s", (school["id"],))
-    prof_ids = [row[0] for row in cur.fetchall()]
-    cur.close()
-
-    for prof_id in prof_ids:
+    if not changed_prof_ids:
+        print("  No professors with new ratings, skipping.")
+    else:
+        # Fetch all ratings for changed professors in one query
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT helpful_rating, difficulty_rating, grade, comment,
-                   class, is_online, attendance_mandatory
-            FROM ratings WHERE professor_id = %s
-        """, (prof_id,))
-        prof_ratings = cur.fetchall()
+            SELECT professor_id, helpful_rating, difficulty_rating, grade,
+                   comment, class, is_online, attendance_mandatory
+            FROM ratings WHERE professor_id = ANY(%s)
+        """, (list(changed_prof_ids),))
+        all_ratings = cur.fetchall()
         cur.close()
 
-        derived = compute_professor_derived(prof_ratings)
+        # Group ratings by professor_id in Python
+        ratings_by_prof = {}
+        for r in all_ratings:
+            pid = r["professor_id"]
+            if pid not in ratings_by_prof:
+                ratings_by_prof[pid] = []
+            ratings_by_prof[pid].append(r)
+
+        # Compute derived stats and bulk update
+        updates = []
+        for prof_id in changed_prof_ids:
+            derived = compute_professor_derived(ratings_by_prof.get(prof_id, []))
+            updates.append((*derived, prof_id))
 
         cur = conn.cursor()
-        cur.execute("""
+        psycopg2.extras.execute_values(cur, """
             UPDATE professors SET
-                grade_distribution        = %s,
-                rating_distribution       = %s,
-                difficulty_distribution   = %s,
-                courses                   = %s,
-                common_tags               = %s,
-                attendance_mandatory_pct  = %s,
-                online_pct                = %s
-            WHERE id = %s
-        """, (*derived, prof_id))
+                grade_distribution        = data.grade_distribution,
+                rating_distribution       = data.rating_distribution,
+                difficulty_distribution   = data.difficulty_distribution,
+                courses                   = data.courses,
+                common_tags               = data.common_tags,
+                attendance_mandatory_pct  = data.attendance_mandatory_pct::real,
+                online_pct                = data.online_pct::real
+            FROM (VALUES %s) AS data(
+                grade_distribution, rating_distribution, difficulty_distribution,
+                courses, common_tags, attendance_mandatory_pct, online_pct, id
+            )
+            WHERE professors.id = data.id
+        """, updates)
         conn.commit()
         cur.close()
 
-    print(f"  Derived columns updated for {len(prof_ids)} professors")
+        print(f"  Derived columns updated for {len(changed_prof_ids)} professors")
 
 conn.close()
 print(f"\nAll schools complete!")

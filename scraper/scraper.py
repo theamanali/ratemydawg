@@ -4,7 +4,6 @@ import psycopg2.extras
 import time
 import os
 import json
-import re
 
 GRAPHQL_URL = "https://www.ratemyprofessors.com/graphql"
 HEADERS = {
@@ -25,17 +24,6 @@ MAX_RETRIES = 3
 RETRY_DELAY = 2
 DB_URL = os.environ["DATABASE_URL"]
 
-STOP_WORDS = {
-    "the","a","an","is","are","was","were","be","been","being",
-    "have","has","had","do","does","did","will","would","shall","should",
-    "may","might","must","can","could","to","of","in","for","on","with",
-    "at","by","from","up","about","into","through","and","but","or","nor",
-    "so","yet","both","either","neither","not","just","very","also","too",
-    "he","she","they","we","i","you","it","this","that","his","her","their",
-    "my","your","its","our","class","professor","prof","teacher","course",
-    "really","very","good","great","bad","ok","okay","time","like","get",
-    "take","make","know","think","even","much","some","only","than","then",
-}
 
 def init_db(conn):
     cur = conn.cursor()
@@ -61,9 +49,6 @@ def init_db(conn):
             rating_distribution TEXT DEFAULT NULL,
             difficulty_distribution TEXT DEFAULT NULL,
             courses TEXT DEFAULT NULL,
-            common_tags TEXT DEFAULT NULL,
-            attendance_mandatory_pct REAL DEFAULT NULL,
-            online_pct REAL DEFAULT NULL,
             FOREIGN KEY (school_id) REFERENCES schools(id)
         )
     """)
@@ -80,7 +65,6 @@ def init_db(conn):
             grade TEXT,
             would_take_again INTEGER,
             is_online BOOLEAN,
-            attendance_mandatory BOOLEAN,
             FOREIGN KEY (professor_id) REFERENCES professors(id)
         )
     """)
@@ -128,7 +112,7 @@ def fetch_ratings_batch(professor_ids):
                         node {{
                             id class date comment
                             clarityRating helpfulRating difficultyRating
-                            grade wouldTakeAgain isForOnlineClass attendanceMandatory
+                            grade wouldTakeAgain isForOnlineClass
                         }}
                     }}
                 }}
@@ -143,16 +127,13 @@ def compute_professor_derived(ratings):
         return (
             json.dumps({}), json.dumps({"1":0,"2":0,"3":0,"4":0,"5":0}),
             json.dumps({"1":0,"2":0,"3":0,"4":0,"5":0}),
-            json.dumps([]), json.dumps([]), None, None,
+            json.dumps([]),
         )
 
     grade_counts = {}
     rating_counts = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0}
     diff_counts = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0}
     course_counts = {}
-    word_counts = {}
-    mandatory = 0
-    online = 0
 
     for r in ratings:
         g = r["grade"] if r["grade"] else "N/A"
@@ -170,28 +151,13 @@ def compute_professor_derived(ratings):
         if c:
             course_counts[c] = course_counts.get(c, 0) + 1
 
-        for w in re.findall(r"[a-z]+(?:'[a-z]+)?", (r["comment"] or "").lower()):
-            if w not in STOP_WORDS and len(w) >= 4:
-                word_counts[w] = word_counts.get(w, 0) + 1
-
-        if r["attendance_mandatory"]:
-            mandatory += 1
-        if r["is_online"]:
-            online += 1
-
     courses_list = [{"code": k, "count": v} for k, v in course_counts.items()]
-    top_tags = sorted(word_counts, key=lambda w: word_counts[w], reverse=True)[:20]
-    attendance_pct = round(mandatory / len(ratings) * 100, 2)
-    online_pct = round(online / len(ratings) * 100, 2)
 
     return (
         json.dumps(grade_counts),
         json.dumps(rating_counts),
         json.dumps(diff_counts),
         json.dumps(courses_list),
-        json.dumps(top_tags),
-        attendance_pct,
-        online_pct,
     )
 
 # --- Main ---
@@ -300,19 +266,17 @@ try:
                     prof_id = batch_ids[idx]
                     for e in val["ratings"]["edges"]:
                         n = e["node"]
-                        attendance = n["attendanceMandatory"]
                         ratings.append((
                             n["id"], prof_id, n["class"], n["date"], n["comment"],
                             n["clarityRating"], n["helpfulRating"], n["difficultyRating"],
                             n["grade"], n["wouldTakeAgain"], n["isForOnlineClass"],
-                            attendance == "mandatory" if attendance else None,
                         ))
 
                 cur = conn.cursor()
                 psycopg2.extras.execute_values(cur, """
                     INSERT INTO ratings
                     (id, professor_id, class, date, comment, clarity_rating, helpful_rating,
-                     difficulty_rating, grade, would_take_again, is_online, attendance_mandatory)
+                     difficulty_rating, grade, would_take_again, is_online)
                     VALUES %s
                     ON CONFLICT (id) DO NOTHING
                 """, ratings)
@@ -333,8 +297,7 @@ try:
                 print("Step 3: Computing derived professor columns...")
                 cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
                 cur.execute("""
-                    SELECT professor_id, helpful_rating, difficulty_rating, grade,
-                           comment, class, is_online, attendance_mandatory
+                    SELECT professor_id, helpful_rating, difficulty_rating, grade, class
                     FROM ratings WHERE professor_id = ANY(%s)
                 """, (list(changed_prof_ids),))
                 all_ratings = cur.fetchall()
@@ -355,16 +318,13 @@ try:
                 cur = conn.cursor()
                 psycopg2.extras.execute_values(cur, """
                     UPDATE professors SET
-                        grade_distribution        = data.grade_distribution,
-                        rating_distribution       = data.rating_distribution,
-                        difficulty_distribution   = data.difficulty_distribution,
-                        courses                   = data.courses,
-                        common_tags               = data.common_tags,
-                        attendance_mandatory_pct  = data.attendance_mandatory_pct::real,
-                        online_pct                = data.online_pct::real
+                        grade_distribution      = data.grade_distribution,
+                        rating_distribution     = data.rating_distribution,
+                        difficulty_distribution = data.difficulty_distribution,
+                        courses                 = data.courses
                     FROM (VALUES %s) AS data(
                         grade_distribution, rating_distribution, difficulty_distribution,
-                        courses, common_tags, attendance_mandatory_pct, online_pct, id
+                        courses, id
                     )
                     WHERE professors.id = data.id
                 """, updates)

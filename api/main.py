@@ -1,5 +1,8 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from contextlib import contextmanager
 import psycopg2
 import psycopg2.extras
@@ -7,7 +10,10 @@ import psycopg2.pool
 import os
 import time
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI()
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,7 +59,7 @@ VALID_SORT_ORDERS = {"asc", "desc"}
 
 
 @app.get("/health")
-def health():
+def health(request: Request):
     start = time.monotonic()
     try:
         with db_cursor() as cur:
@@ -69,14 +75,16 @@ def health():
 
 
 @app.get("/schools")
-def get_schools():
+@limiter.limit("60/minute")
+def get_schools(request: Request):
     with db_cursor() as cur:
         cur.execute("SELECT * FROM schools ORDER BY name")
         return cur.fetchall()
 
 
 @app.get("/departments")
-def get_departments(school_id: str = Query(None)):
+@limiter.limit("60/minute")
+def get_departments(request: Request, school_id: str = Query(None)):
     with db_cursor() as cur:
         if school_id:
             cur.execute(
@@ -93,7 +101,9 @@ def get_departments(school_id: str = Query(None)):
 
 
 @app.get("/professors")
+@limiter.limit("60/minute")
 def get_professors(
+    request: Request,
     school_id: str = Query(None),
     department: str = Query(None),
     min_ratings: int = Query(0),
@@ -142,7 +152,9 @@ def get_professors(
 
 
 @app.get("/professors/search")
+@limiter.limit("30/minute")
 def search_professors(
+    request: Request,
     name: str = Query(..., min_length=2),
     school_id: str = Query(None),
     limit: int = Query(10),
@@ -173,7 +185,8 @@ def search_professors(
 
 
 @app.get("/professors/{professor_id}")
-def get_professor(professor_id: str):
+@limiter.limit("60/minute")
+def get_professor(request: Request, professor_id: str):
     with db_cursor() as cur:
         cur.execute("SELECT * FROM professors WHERE id = %s", (professor_id,))
         professor = cur.fetchone()
@@ -183,7 +196,9 @@ def get_professor(professor_id: str):
 
 
 @app.get("/professors/{professor_id}/ratings")
+@limiter.limit("30/minute")
 def get_ratings(
+    request: Request,
     professor_id: str,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),

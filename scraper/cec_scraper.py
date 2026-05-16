@@ -12,6 +12,7 @@ TOC_URL = f"{BASE_URL}/toc.html"
 LETTERS = list("abcdefghijklmnopqrstuvwxyz")
 CONCURRENT_PAGES = 50
 DB_URL = os.environ["DATABASE_URL"]
+_url_warnings = []
 
 
 def get_existing_urls():
@@ -65,9 +66,9 @@ def _pct(s):
 
 def parse_url(url):
     filename = url.split("/")[-1].replace(".html", "")
-    match = re.match(r"([A-Z]+\d+)([A-Z]+)(\d+)", filename)
+    match = re.fullmatch(r"([A-Z&]+\d+)([A-Z]+)(\d+)", filename)
     if not match:
-        print(f"  Warning: could not parse URL: {url}")
+        _url_warnings.append(url)
         return None, None
     return match.group(1), match.group(2)
 
@@ -196,14 +197,39 @@ async def scrape_all(context, links):
     avg = elapsed / total if total > 0 else 0
     print(f"\nDone in {fmt_time(elapsed)} — {avg:.2f}s avg per page")
 
+    if _url_warnings:
+        print(f"\n  {len(_url_warnings)} URLs could not be parsed (course_code/section will be null):")
+        for url in _url_warnings:
+            print(f"    {url.split('/')[-1]}")
+        _url_warnings.clear()
+
     if failed:
         print(f"\n  {len(failed)} failed, retrying...")
         retry_urls = [url for url, _ in failed]
         failed.clear()
-        await asyncio.gather(*[scrape_one(url) for url in retry_urls])
-        retried = len(retry_urls)
+
+        retry_completed = 0
+        retry_total = len(retry_urls)
+        retry_start = time.monotonic()
+        print(render_bar(0, retry_total, 0), end="", flush=True)
+
+        async def retry_one(href):
+            nonlocal retry_completed
+            async with sem:
+                eval_page = await context.new_page()
+                try:
+                    result = await parse_evaluation_page(eval_page, href)
+                    scraped.append(result)
+                    retry_completed += 1
+                except Exception as e:
+                    failed.append((href, str(e)))
+                finally:
+                    await eval_page.close()
+                print(f"\r{render_bar(retry_completed, retry_total, time.monotonic() - retry_start)}", end="", flush=True)
+
+        await asyncio.gather(*[retry_one(url) for url in retry_urls])
         still_failed = len(failed)
-        print(f"  Retried {retried} pages — {retried - still_failed} succeeded, {still_failed} still failed")
+        print(f"\n  Retried {retry_total} — {retry_total - still_failed} succeeded, {still_failed} still failed")
 
     if failed:
         print(f"\n{len(failed)} still failed:")

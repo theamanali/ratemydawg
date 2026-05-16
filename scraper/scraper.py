@@ -128,6 +128,8 @@ def main():
     init_db(conn)
 
     try:
+        all_ratings = []
+
         for school in SCHOOLS:
             print(f"\n{'='*50}")
             print(f"School: {school['name']}")
@@ -224,7 +226,7 @@ def main():
                         changed_prof_ids -= set(batch_ids)
                         continue
 
-                    new_ratings = []
+                    batch_ratings = []
                     for alias, teacher in batch_response.get("data", {}).items():
                         if not teacher or "ratings" not in teacher:
                             continue
@@ -234,28 +236,32 @@ def main():
                         batch_prof_id = batch_ids[alias_idx]
                         for edge in teacher["ratings"]["edges"]:
                             node = edge["node"]
-                            new_ratings.append((
+                            batch_ratings.append((
                                 node["id"], batch_prof_id, node["class"], node["date"], node["comment"],
                                 node["clarityRating"], node["helpfulRating"], node["difficultyRating"],
                                 node["grade"], node["wouldTakeAgain"], node["isForOnlineClass"],
                             ))
 
-                    cur = conn.cursor()
-                    psycopg2.extras.execute_values(cur, """
-                        INSERT INTO rmp_ratings_raw
-                        (id, professor_id, class, date, comment, clarity_rating, helpful_rating,
-                         difficulty_rating, grade, would_take_again, is_online)
-                        VALUES %s
-                        ON CONFLICT (id) DO NOTHING
-                    """, new_ratings)
-                    conn.commit()
-                    cur.close()
                     elapsed = time.time() - start
-                    total_ratings += len(new_ratings)
-                    print(f"  Batch {batch_num}/{total_batches}: {len(new_ratings)} ratings in {elapsed:.2f}s (total: {total_ratings})")
+                    all_ratings.extend(batch_ratings)
+                    total_ratings += len(batch_ratings)
+                    print(f"  Batch {batch_num}/{total_batches}: {len(batch_ratings)} ratings in {elapsed:.2f}s (total: {total_ratings})")
                     time.sleep(0.5)
 
                 print(f"  Done: Processed {total_ratings} rating(s) across {len(changed_prof_ids)} professor(s)")
+
+        if all_ratings:
+            cur = conn.cursor()
+            psycopg2.extras.execute_values(cur, """
+                INSERT INTO rmp_ratings_raw
+                (id, professor_id, class, date, comment, clarity_rating, helpful_rating,
+                 difficulty_rating, grade, would_take_again, is_online)
+                VALUES %s
+                ON CONFLICT (id) DO NOTHING
+            """, all_ratings)
+            conn.commit()
+            cur.close()
+            print(f"\nInserted {len(all_ratings):,} ratings into DB")
 
     finally:
         conn.close()

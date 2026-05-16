@@ -192,11 +192,15 @@ def main():
 
     plain_cur.close()
 
-    same_school = sum(1 for g in dup_groups if len(set(g["school_ids"])) == 1)
-    cross_campus = len(dup_groups) - same_school
-    print(f"  Same-school duplicates: {same_school} groups")
-    print(f"  Cross-campus duplicates: {cross_campus} groups")
-    print(f"  Total extra profiles removed: {len(loser_ids_set)}")
+    same_school_groups = [g for g in dup_groups if len(set(g["school_ids"])) == 1]
+    cross_campus_groups = [g for g in dup_groups if len(set(g["school_ids"])) > 1]
+    same_school_total = sum(len(g["ids"]) for g in same_school_groups)
+    cross_campus_total = sum(len(g["ids"]) for g in cross_campus_groups)
+    same_school = len(same_school_groups)
+    cross_campus = len(cross_campus_groups)
+    print(f"  Same-school:  {same_school_total} profiles combined into {same_school} professors")
+    print(f"  Cross-campus: {cross_campus_total} profiles combined into {cross_campus} professors")
+    print(f"  Total: {len(loser_ids_set)} duplicates removed, {same_school + cross_campus} professors merged")
 
     # ── Step 2: Build professors from RMP ──
     print("\nBuilding master professors table from RMP...")

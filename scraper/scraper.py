@@ -146,26 +146,19 @@ def main():
         all_professors = []
         all_ratings = []
 
+        # Step 1: fetch professors for all schools
+        print("Fetching professors...")
         for school in SCHOOLS:
-            print(f"\n{'='*50}")
-            print(f"School: {school['name']}")
-            print(f"{'='*50}")
-
-            # Step 1: fetch all professors
-            print("Step 1: Fetching professor info...")
             professors = []
             page_cursor = None
             page = 1
             while True:
-                start = time.time()
                 page_data = fetch_professors_page(school["id"], page_cursor)
-                elapsed = time.time() - start
                 if not page_data:
-                    print("  Failed to fetch page, aborting")
+                    print(f"  {school['name']}: failed to fetch page {page}, aborting")
                     break
                 batch = [e["node"] for e in page_data["edges"]]
                 professors.extend(batch)
-                print(f"  Page {page}: {len(batch)} professors (total: {len(professors)}) in {elapsed:.2f}s")
                 if not page_data["pageInfo"]["hasNextPage"]:
                     break
                 page_cursor = page_data["pageInfo"]["endCursor"]
@@ -180,64 +173,66 @@ def main():
                     p["id"] for p in professors
                     if 0 < p["numRatings"] != existing.get(p["id"])
                 }
-            any_changes = new_prof_ids or changed_prof_ids
 
-            if any_changes:
-                changed_ids = new_prof_ids | changed_prof_ids
-                all_professors.extend([(
-                    p["id"], school["id"], p["firstName"], p["lastName"],
-                    p["department"],
-                    p["avgRating"] if p["numRatings"] > 0 else None,
-                    p["avgDifficulty"] if p["numRatings"] > 0 else None,
-                    p["numRatings"], p["wouldTakeAgainPercent"] if p["wouldTakeAgainPercent"] != -1 else None,
-                ) for p in professors if p["id"] in changed_ids])
-                print(f"  Done: {len(new_prof_ids)} new professors, {len(changed_prof_ids)} with new ratings")
-            else:
-                print("  No new professors or ratings — skipping step 2.")
+            changed_ids = new_prof_ids | changed_prof_ids
+            all_professors.extend([(
+                p["id"], school["id"], p["firstName"], p["lastName"],
+                p["department"],
+                p["avgRating"] if p["numRatings"] > 0 else None,
+                p["avgDifficulty"] if p["numRatings"] > 0 else None,
+                p["numRatings"], p["wouldTakeAgainPercent"] if p["wouldTakeAgainPercent"] != -1 else None,
+            ) for p in professors if p["id"] in changed_ids])
 
-            if any_changes:
-                # Step 2: fetch ratings for professors with new ratings
-                print("Step 2: Fetching ratings...")
-                ids = [p["id"] for p in professors if p["id"] in changed_prof_ids]
-                total_ratings = 0
-                total_batches = (len(ids) + RATINGS_BATCH_SIZE - 1) // RATINGS_BATCH_SIZE
+            school["_professors"] = professors
+            school["_changed_prof_ids"] = changed_prof_ids
+            school["_new_prof_ids"] = new_prof_ids
+            print(f"  {school['name']}: {len(professors):,} professors ({page} pages) — {len(new_prof_ids)} new, {len(changed_prof_ids)} with new ratings")
 
-                for i in range(0, len(ids), RATINGS_BATCH_SIZE):
-                    batch_ids = ids[i:i + RATINGS_BATCH_SIZE]
-                    batch_num = (i // RATINGS_BATCH_SIZE) + 1
+        # Step 2: fetch ratings for all schools
+        print("\nFetching ratings...")
+        for school in SCHOOLS:
+            professors = school["_professors"]
+            changed_prof_ids = school["_changed_prof_ids"]
+            ids = [p["id"] for p in professors if p["id"] in changed_prof_ids]
 
-                    start = time.time()
-                    batch_response = fetch_ratings_batch(batch_ids)
+            if not ids:
+                print(f"  {school['name']}: no new ratings")
+                continue
 
-                    if not batch_response:
-                        print(f"  Batch {batch_num}/{total_batches}: SKIPPED after retries")
-                        changed_prof_ids -= set(batch_ids)
+            total_batches = (len(ids) + RATINGS_BATCH_SIZE - 1) // RATINGS_BATCH_SIZE
+            school_ratings = 0
+
+            for i in range(0, len(ids), RATINGS_BATCH_SIZE):
+                batch_ids = ids[i:i + RATINGS_BATCH_SIZE]
+                batch_num = (i // RATINGS_BATCH_SIZE) + 1
+                batch_response = fetch_ratings_batch(batch_ids)
+
+                if not batch_response:
+                    print(f"  {school['name']} batch {batch_num}/{total_batches}: SKIPPED after retries")
+                    continue
+
+                for alias, teacher in batch_response.get("data", {}).items():
+                    if not teacher or "ratings" not in teacher:
                         continue
+                    alias_idx = int(alias[1:])
+                    if alias_idx >= len(batch_ids):
+                        continue
+                    batch_prof_id = batch_ids[alias_idx]
+                    for edge in teacher["ratings"]["edges"]:
+                        node = edge["node"]
+                        all_ratings.append((
+                            node["id"], batch_prof_id, node["class"], node["date"], node["comment"],
+                            node["clarityRating"], node["helpfulRating"], node["difficultyRating"],
+                            node["grade"], node["wouldTakeAgain"], node["isForOnlineClass"],
+                        ))
+                        school_ratings += 1
 
-                    batch_ratings = []
-                    for alias, teacher in batch_response.get("data", {}).items():
-                        if not teacher or "ratings" not in teacher:
-                            continue
-                        alias_idx = int(alias[1:])
-                        if alias_idx >= len(batch_ids):
-                            continue
-                        batch_prof_id = batch_ids[alias_idx]
-                        for edge in teacher["ratings"]["edges"]:
-                            node = edge["node"]
-                            batch_ratings.append((
-                                node["id"], batch_prof_id, node["class"], node["date"], node["comment"],
-                                node["clarityRating"], node["helpfulRating"], node["difficultyRating"],
-                                node["grade"], node["wouldTakeAgain"], node["isForOnlineClass"],
-                            ))
+                time.sleep(0.5)
 
-                    elapsed = time.time() - start
-                    all_ratings.extend(batch_ratings)
-                    total_ratings += len(batch_ratings)
-                    print(f"  Batch {batch_num}/{total_batches}: {len(batch_ratings)} ratings in {elapsed:.2f}s (total: {total_ratings})")
-                    time.sleep(0.5)
+            print(f"  {school['name']}: {school_ratings:,} ratings ({total_batches} batch{'es' if total_batches != 1 else ''})")
 
-                print(f"  Done: Processed {total_ratings} rating(s) across {len(changed_prof_ids)} professor(s)")
-
+        # Step 3: write to DB
+        print("\nSaving to DB...")
         if all_professors:
             cur = conn.cursor()
             psycopg2.extras.execute_values(cur, """
@@ -252,7 +247,7 @@ def main():
             """, all_professors)
             conn.commit()
             cur.close()
-            print(f"\nSaved {len(all_professors):,} professors to DB")
+        print(f"  {len(all_professors):,} new/updated professors")
 
         if all_ratings:
             cur = conn.cursor()
@@ -265,7 +260,7 @@ def main():
             """, all_ratings)
             conn.commit()
             cur.close()
-            print(f"Saved {len(all_ratings):,} ratings to DB")
+        print(f"  {len(all_ratings):,} new ratings")
 
     finally:
         conn.close()

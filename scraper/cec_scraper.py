@@ -66,9 +66,10 @@ def _pct(s):
 def parse_url(url):
     filename = url.split("/")[-1].replace(".html", "")
     match = re.match(r"([A-Z]+\d+)([A-Z]+)(\d+)", filename)
-    if match:
-        return match.group(1), match.group(2)
-    return None, None
+    if not match:
+        print(f"  Warning: could not parse URL: {url}")
+        return None, None
+    return match.group(1), match.group(2)
 
 
 async def get_letter_links(page, letter):
@@ -155,16 +156,15 @@ def render_bar(completed, total, elapsed, width=40):
     return f"[{bar}] {completed:,}/{total:,} ({pct:.0%}) {fmt_time(elapsed)}{eta_str}"
 
 
-async def scrape_all(context, links, existing_urls):
+async def scrape_all(context, links):
     total = len(links)
     completed = 0
     sem = asyncio.Semaphore(CONCURRENT_PAGES)
     start = time.monotonic()
     scraped = []
+    failed = []
 
     print(render_bar(0, total, 0), end="", flush=True)
-
-    failed = []
 
     async def scrape_one(link):
         nonlocal completed
@@ -175,10 +175,10 @@ async def scrape_all(context, links, existing_urls):
                 result = await parse_evaluation_page(eval_page, href)
                 await eval_page.close()
                 scraped.append(result)
+                completed += 1
             except Exception as e:
                 failed.append((href, str(e)))
-            completed += 1
-            print(f"\r{render_bar(completed, total, time.monotonic() - start)}", end="", flush=True)
+            print(f"\r{render_bar(completed, total - len(failed), time.monotonic() - start)}", end="", flush=True)
 
     await asyncio.gather(*[scrape_one(link) for link in links])
     elapsed = time.monotonic() - start
@@ -226,7 +226,7 @@ async def main():
             get_letter_links(scan_pages[i], letter)
             for i, letter in enumerate(LETTERS)
         ])
-        await asyncio.gather(*[p.close() for p in scan_pages])
+        await asyncio.gather(*[pg.close() for pg in scan_pages])
 
         letter_links = {letter: links for letter, links in zip(LETTERS, results_scan)}
         total_all = sum(len(v) for v in letter_links.values())
@@ -247,7 +247,7 @@ async def main():
             if link["href"] not in existing_urls
         ]
 
-        await scrape_all(context, all_new_links, existing_urls)
+        await scrape_all(context, all_new_links)
         await browser.close()
 
     print(f"\nDone! {len(existing_urls) + total_new:,} total evaluations in DB")

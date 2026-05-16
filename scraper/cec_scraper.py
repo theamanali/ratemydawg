@@ -166,27 +166,36 @@ async def scrape_all(context, links):
 
     print(render_bar(0, total, 0), end="", flush=True)
 
-    async def scrape_one(link):
+    async def scrape_one(href):
         nonlocal completed
         async with sem:
-            href = link["href"]
+            eval_page = await context.new_page()
             try:
-                eval_page = await context.new_page()
                 result = await parse_evaluation_page(eval_page, href)
-                await eval_page.close()
                 scraped.append(result)
                 completed += 1
             except Exception as e:
                 failed.append((href, str(e)))
-            print(f"\r{render_bar(completed, total - len(failed), time.monotonic() - start)}", end="", flush=True)
+            finally:
+                await eval_page.close()
+            print(f"\r{render_bar(completed, total, time.monotonic() - start)}", end="", flush=True)
 
-    await asyncio.gather(*[scrape_one(link) for link in links])
+    await asyncio.gather(*[scrape_one(link["href"]) for link in links])
     elapsed = time.monotonic() - start
     avg = elapsed / total if total > 0 else 0
     print(f"\nDone in {fmt_time(elapsed)} — {avg:.2f}s avg per page")
 
     if failed:
-        print(f"\n{len(failed)} failed:")
+        print(f"\n  {len(failed)} failed, retrying...")
+        retry_urls = [url for url, _ in failed]
+        failed.clear()
+        await asyncio.gather(*[scrape_one(url) for url in retry_urls])
+        retried = len(retry_urls)
+        still_failed = len(failed)
+        print(f"  Retried {retried} pages — {retried - still_failed} succeeded, {still_failed} still failed")
+
+    if failed:
+        print(f"\n{len(failed)} still failed:")
         for url, err in failed:
             print(f"  {url.split('/')[-1]}: {err}")
 
@@ -209,7 +218,12 @@ async def main():
         print("\nBrowser opened. Please log in with your UW NetID...")
 
         # Wait for the TOC page to load (user completes login + 2FA)
-        await page.wait_for_url(TOC_URL, timeout=300_000)
+        try:
+            await page.wait_for_url(TOC_URL, timeout=300_000)
+        except Exception:
+            print("\nLogin timed out or failed. Closing browser.")
+            await browser.close()
+            return
         print("Authenticated! Switching to headless browser...")
 
         # Transfer session cookies to a headless browser

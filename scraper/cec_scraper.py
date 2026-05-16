@@ -152,8 +152,6 @@ def fmt_eta(seconds):
     mins = seconds / 60
     if mins < 1:
         return "<1 min"
-    if mins >= 5:
-        return f"~{round(mins / 2) * 2} min"
     return f"~{round(mins)} min"
 
 

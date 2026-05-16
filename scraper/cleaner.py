@@ -134,7 +134,7 @@ def main():
 
     # Group by name only (across all schools) to catch cross-campus duplicates
     cur.execute("""
-        SELECT REGEXP_REPLACE(LOWER(TRIM(first_name || ' ' || last_name)), '\s+', ' ', 'g') as full_name,
+        SELECT REGEXP_REPLACE(LOWER(TRIM(first_name || ' ' || last_name)), '\\s+', ' ', 'g') as full_name,
                array_agg(id ORDER BY num_ratings DESC) as ids,
                array_agg(school_id ORDER BY num_ratings DESC) as school_ids,
                array_agg(department ORDER BY num_ratings DESC) as departments,
@@ -143,7 +143,7 @@ def main():
                array_agg(would_take_again ORDER BY num_ratings DESC) as wtas,
                array_agg(num_ratings ORDER BY num_ratings DESC) as num_ratings_list
         FROM rmp_professors_raw
-        GROUP BY REGEXP_REPLACE(LOWER(TRIM(first_name || ' ' || last_name)), '\s+', ' ', 'g')
+        GROUP BY REGEXP_REPLACE(LOWER(TRIM(first_name || ' ' || last_name)), '\\s+', ' ', 'g')
         HAVING COUNT(*) > 1
     """)
     dup_groups = cur.fetchall()

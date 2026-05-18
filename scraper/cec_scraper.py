@@ -12,8 +12,6 @@ TOC_URL = f"{BASE_URL}/toc.html"
 LETTERS = list("abcdefghijklmnopqrstuvwxyz")
 CONCURRENT_PAGES = 50
 DB_URL = os.environ["DATABASE_URL"]
-_url_warnings = []
-
 
 def get_existing_urls():
     conn = psycopg2.connect(DB_URL, sslmode="require")
@@ -68,7 +66,6 @@ def parse_url(url):
     filename = url.split("/")[-1].replace(".html", "")
     match = re.fullmatch(r"([A-Z&]+\d+)([A-Z]+)(\d+)", filename)
     if not match:
-        _url_warnings.append(url)
         return None, None
     return match.group(1), match.group(2)
 
@@ -168,68 +165,52 @@ def render_bar(completed, total, elapsed, width=40):
     return f"[{bar}] {completed:,}/{total:,} ({pct:.0%}) {fmt_time(elapsed)}{eta_str}"
 
 
-async def scrape_all(context, links):
-    total = len(links)
+async def run_batch(context, urls, sem, scraped, failed):
+    total = len(urls)
     completed = 0
-    sem = asyncio.Semaphore(CONCURRENT_PAGES)
     start = time.monotonic()
-    scraped = []
-    failed = []
-
     print(render_bar(0, total, 0), end="", flush=True)
 
-    async def scrape_one(href):
+    async def _worker(href):
         nonlocal completed
         async with sem:
-            eval_page = await context.new_page()
+            page = await context.new_page()
             try:
-                result = await parse_evaluation_page(eval_page, href)
+                result = await parse_evaluation_page(page, href)
                 scraped.append(result)
                 completed += 1
             except Exception as e:
                 failed.append((href, str(e)))
             finally:
-                await eval_page.close()
-            print(f"\r{render_bar(completed, total, time.monotonic() - start)}", end="", flush=True)
+                await page.close()
+            done = completed + len(failed)
+            print(f"\r{render_bar(done, total, time.monotonic() - start)}", end="", flush=True)
 
-    await asyncio.gather(*[scrape_one(link["href"]) for link in links])
+    await asyncio.gather(*[_worker(href) for href in urls])
     elapsed = time.monotonic() - start
-    avg = elapsed / total if total > 0 else 0
+    avg = elapsed / total if total else 0
     print(f"\nDone in {fmt_time(elapsed)} — {avg:.2f}s avg per page")
 
-    if _url_warnings:
-        print(f"\n  {len(_url_warnings)} URLs could not be parsed (course_code/section will be null):")
-        for url in _url_warnings:
+
+async def scrape_all(context, links):
+    sem = asyncio.Semaphore(CONCURRENT_PAGES)
+    scraped, failed = [], []
+
+    await run_batch(context, [l["href"] for l in links], sem, scraped, failed)
+
+    url_warnings = [l["href"] for l in links if parse_url(l["href"]) == (None, None)]
+    if url_warnings:
+        print(f"\n  {len(url_warnings)} URLs could not be parsed (course_code/section will be null):")
+        for url in url_warnings:
             print(f"    {url.split('/')[-1]}")
-        _url_warnings.clear()
 
     if failed:
-        print(f"\n  {len(failed)} failed, retrying...")
         retry_urls = [url for url, _ in failed]
         failed.clear()
-
-        retry_completed = 0
-        retry_total = len(retry_urls)
-        retry_start = time.monotonic()
-        print(render_bar(0, retry_total, 0), end="", flush=True)
-
-        async def retry_one(href):
-            nonlocal retry_completed
-            async with sem:
-                eval_page = await context.new_page()
-                try:
-                    result = await parse_evaluation_page(eval_page, href)
-                    scraped.append(result)
-                    retry_completed += 1
-                except Exception as e:
-                    failed.append((href, str(e)))
-                finally:
-                    await eval_page.close()
-                print(f"\r{render_bar(retry_completed, retry_total, time.monotonic() - retry_start)}", end="", flush=True)
-
-        await asyncio.gather(*[retry_one(url) for url in retry_urls])
+        print(f"\n  {len(retry_urls)} failed, retrying...")
+        await run_batch(context, retry_urls, sem, scraped, failed)
         still_failed = len(failed)
-        print(f"\n  Retried {retry_total} — {retry_total - still_failed} succeeded, {still_failed} still failed")
+        print(f"  Retried {len(retry_urls)} — {len(retry_urls) - still_failed} succeeded, {still_failed} still failed")
 
     if failed:
         print(f"\n{len(failed)} still failed:")

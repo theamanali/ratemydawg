@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import time
@@ -47,6 +48,7 @@ def init_db(db_conn):
             avg_difficulty REAL,
             num_ratings INTEGER,
             would_take_again REAL,
+            course_codes JSONB,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -57,12 +59,14 @@ def init_db(db_conn):
             class TEXT,
             date TEXT,
             comment TEXT,
-            clarity_rating INTEGER,
-            helpful_rating INTEGER,
+            quality_rating INTEGER,
             difficulty_rating INTEGER,
             grade TEXT,
-            would_take_again INTEGER,
-            is_online BOOLEAN
+            would_take_again BOOLEAN,
+            is_online BOOLEAN,
+            attendance_mandatory TEXT,
+            textbook_used BOOLEAN,
+            rating_tags TEXT
         )
     """)
     db_conn.commit()
@@ -93,6 +97,7 @@ def fetch_professors_page(school_id, page_cursor=None):
                     node {{
                         id firstName lastName department
                         avgRating avgDifficulty numRatings wouldTakeAgainPercent
+                        courseCodes {{ courseName courseCount }}
                     }}
                 }}
                 pageInfo {{ hasNextPage endCursor }}
@@ -107,12 +112,15 @@ def fetch_ratings_batch(professor_ids):
     aliases = "\n".join([
         f"""p{idx}: node(id: "{prof_id}") {{
             ... on Teacher {{
+                wouldTakeAgainPercent
+                teacherRatingTags {{ tagCount tagName }}
                 ratings(first: 1000) {{
                     edges {{
                         node {{
                             id class date comment
-                            clarityRating helpfulRating difficultyRating
+                            qualityRating difficultyRating
                             grade wouldTakeAgain isForOnlineClass
+                            attendanceMandatory textbookIsUsed ratingTags
                         }}
                     }}
                 }}
@@ -145,7 +153,8 @@ def main():
 
         all_professors = []
         all_ratings = []
-        all_changed_prof_ids = []
+        profs_to_fetch = []
+        wta_updates = {}
 
         # Step 1: fetch professors for all schools
         print("Fetching professors...")
@@ -167,34 +176,32 @@ def main():
                 time.sleep(0.5)
 
             new_prof_ids = {p["id"] for p in professors if p["id"] not in existing}
-            if FORCE:
-                changed_prof_ids = {p["id"] for p in professors if p["numRatings"] > 0}
-            else:
-                changed_prof_ids = {
-                    p["id"] for p in professors
-                    if 0 < p["numRatings"] != existing.get(p["id"])
-                }
+            rating_changed_ids = {
+                p["id"] for p in professors
+                if p["numRatings"] > 0 and (FORCE or p["numRatings"] != existing.get(p["id"]))
+            }
 
-            changed_ids = new_prof_ids | changed_prof_ids
+            profs_to_upsert = new_prof_ids | rating_changed_ids
             all_professors.extend([(
                 p["id"], school["id"], p["firstName"], p["lastName"],
                 p["department"],
                 p["avgRating"] if p["numRatings"] > 0 else None,
                 p["avgDifficulty"] if p["numRatings"] > 0 else None,
                 p["numRatings"], p["wouldTakeAgainPercent"] if p["wouldTakeAgainPercent"] != -1 else None,
-            ) for p in professors if p["id"] in changed_ids])
-            all_changed_prof_ids.extend(changed_prof_ids)
+                json.dumps(p.get("courseCodes")),
+            ) for p in professors if p["id"] in profs_to_upsert])
+            profs_to_fetch.extend(rating_changed_ids)
 
-            print(f"  {school['name']}: {len(professors):,} professors ({page} pages) — {len(new_prof_ids)} new, {len(changed_prof_ids)} with new ratings")
+            print(f"  {school['name']}: {len(professors):,} professors ({page} pages) — {len(new_prof_ids)} new, {len(rating_changed_ids)} with new ratings")
 
         # Step 2: fetch ratings for all changed professors
         print("\nFetching ratings...")
-        if not all_changed_prof_ids:
+        if not profs_to_fetch:
             print("  No new ratings")
         else:
-            total_batches = (len(all_changed_prof_ids) + RATINGS_BATCH_SIZE - 1) // RATINGS_BATCH_SIZE
-            for i in range(0, len(all_changed_prof_ids), RATINGS_BATCH_SIZE):
-                batch_ids = all_changed_prof_ids[i:i + RATINGS_BATCH_SIZE]
+            total_batches = (len(profs_to_fetch) + RATINGS_BATCH_SIZE - 1) // RATINGS_BATCH_SIZE
+            for i in range(0, len(profs_to_fetch), RATINGS_BATCH_SIZE):
+                batch_ids = profs_to_fetch[i:i + RATINGS_BATCH_SIZE]
                 batch_num = (i // RATINGS_BATCH_SIZE) + 1
                 batch_response = fetch_ratings_batch(batch_ids)
 
@@ -210,12 +217,17 @@ def main():
                     if alias_idx >= len(batch_ids):
                         continue
                     batch_prof_id = batch_ids[alias_idx]
+                    wta = teacher.get("wouldTakeAgainPercent")
+                    if wta is not None and wta != -1:
+                        wta_updates[batch_prof_id] = wta
                     for edge in teacher["ratings"]["edges"]:
                         node = edge["node"]
+                        wta = node["wouldTakeAgain"]
                         all_ratings.append((
                             node["id"], batch_prof_id, node["class"], node["date"], node["comment"],
-                            node["clarityRating"], node["helpfulRating"], node["difficultyRating"],
-                            node["grade"], node["wouldTakeAgain"], node["isForOnlineClass"],
+                            node["qualityRating"], node["difficultyRating"],
+                            node["grade"], None if wta is None else bool(wta), node["isForOnlineClass"],
+                            node.get("attendanceMandatory"), node.get("textbookIsUsed"), node.get("ratingTags"),
                         ))
                         batch_ratings += 1
 
@@ -227,13 +239,14 @@ def main():
         if all_professors:
             cur = conn.cursor()
             psycopg2.extras.execute_values(cur, """
-                INSERT INTO rmp_professors_raw (id, school_id, first_name, last_name, department, avg_rating, avg_difficulty, num_ratings, would_take_again)
+                INSERT INTO rmp_professors_raw (id, school_id, first_name, last_name, department, avg_rating, avg_difficulty, num_ratings, would_take_again, course_codes)
                 VALUES %s
                 ON CONFLICT (id) DO UPDATE SET
                     avg_rating = EXCLUDED.avg_rating,
                     avg_difficulty = EXCLUDED.avg_difficulty,
                     num_ratings = EXCLUDED.num_ratings,
                     would_take_again = EXCLUDED.would_take_again,
+                    course_codes = EXCLUDED.course_codes,
                     updated_at = CURRENT_TIMESTAMP
             """, all_professors)
             conn.commit()
@@ -244,14 +257,27 @@ def main():
             cur = conn.cursor()
             psycopg2.extras.execute_values(cur, """
                 INSERT INTO rmp_ratings_raw
-                (id, professor_id, class, date, comment, clarity_rating, helpful_rating,
-                 difficulty_rating, grade, would_take_again, is_online)
+                (id, professor_id, class, date, comment, quality_rating,
+                 difficulty_rating, grade, would_take_again, is_online,
+                 attendance_mandatory, textbook_used, rating_tags)
                 VALUES %s
                 ON CONFLICT (id) DO NOTHING
             """, all_ratings)
             conn.commit()
             cur.close()
         print(f"  {len(all_ratings):,} new ratings")
+
+        if wta_updates:
+            cur = conn.cursor()
+            psycopg2.extras.execute_values(cur, """
+                UPDATE rmp_professors_raw SET would_take_again = data.pct
+                FROM (VALUES %s) AS data(id, pct)
+                WHERE rmp_professors_raw.id = data.id
+            """, [(pid, pct) for pid, pct in wta_updates.items()])
+            conn.commit()
+            cur.close()
+        print(f"  {len(wta_updates):,} would_take_again values updated")
+
 
     finally:
         conn.close()

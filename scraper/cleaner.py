@@ -3,10 +3,12 @@ import html
 import json
 import os
 import re
+import unicodedata
 import psycopg2
 import psycopg2.extras
 from collections import defaultdict
 from nameparser import HumanName
+from rapidfuzz.fuzz import token_set_ratio
 
 DB_URL = os.environ["DATABASE_URL"]
 
@@ -50,7 +52,9 @@ GRADE_ALIASES = {
 }
 QUARTER_MAP = {"WI": ("Winter", 1), "SP": ("Spring", 3), "SU": ("Summer", 7), "AU": ("Autumn", 9)}
 NAME_TO_MONTH = {name: month for name, month in QUARTER_MAP.values()}
-FUZZY_THRESHOLD = 0.7
+FUZZY_THRESHOLD = 0.68
+HYBRID_THRESHOLD = 85   # rapidfuzz token_set_ratio
+HYBRID_MIN_SHARED = 2   # minimum shared tokens >= 4 chars
 
 
 def normalize_dept(dept):
@@ -147,6 +151,33 @@ def weighted(values, weights):
     return round(sum(v * w for v, w in pairs) / sum(w for _, w in pairs), 2)
 
 
+def _wavg(pairs):
+    valid = [(v, w) for v, w in pairs if v is not None]
+    if not valid:
+        return None
+    total_w = sum(w for _, w in valid)
+    if total_w == 0:
+        return round(sum(v for v, _ in valid) / len(valid), 4)
+    return round(sum(v * w for v, w in valid) / total_w, 4)
+
+
+def _rmp_dedup_key(p):
+    first = re.sub(r'\(.*?\)', '', p["first_name"] or '').strip()
+    last = re.sub(r'\s*-\s*', '-', p["last_name"] or '')
+    return norm_name(first, None, last)
+
+
+def _fl_key(name):
+    first, _, last = parse_name(name)
+    return (strip_accents((first or '').lower()), strip_accents((last or '').lower()))
+
+
+def _shared_long_tokens(a, b):
+    ta = {t for t in a.split() if len(t) >= 4}
+    tb = {t for t in b.split() if len(t) >= 4}
+    return len(ta & tb)
+
+
 def rmp_url(rmp_id):
     if not rmp_id:
         return None
@@ -163,8 +194,13 @@ def normalize_course(raw):
     return m.group(1) + m.group(2) if m else None
 
 
+def strip_accents(s):
+    return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+
+
 def norm_name(first, middle, last):
-    return ' '.join(((first or '') + ' ' + (middle or '') + ' ' + (last or '')).strip().lower().split())
+    combined = ((first or '') + ' ' + (middle or '') + ' ' + (last or '')).strip().lower()
+    return strip_accents(' '.join(combined.split()))
 
 
 def normalize_initials(s):
@@ -217,14 +253,22 @@ def combined_school_name(school_ids, school_names):
 RESPONSE_ORDER = ["very_poor", "poor", "fair", "good", "very_good", "excellent", "median"]
 
 MEDIAN_QUESTIONS = [
-    ("Instructor's contribution",  "instructor_contribution_median"),
-    ("Instructor's effectiveness", "instructor_effectiveness_median"),
-    ("The course as a whole",      "course_as_whole_median"),
-    ("The course content",         "course_content_median"),
-    ("Amount learned",             "amount_learned_median"),
-    ("Instuctor's interest",       "instructor_interest_median"),
-    ("Grading techniques",         "grading_techniques_median"),
+    ("Instructor's contribution",  "instructor_contribution_median_weighted"),
+    ("Instructor's effectiveness", "instructor_effectiveness_median_weighted"),
+    ("The course as a whole",      "course_as_whole_median_weighted"),
+    ("The course content",         "course_content_median_weighted"),
+    ("Amount learned",             "amount_learned_median_weighted"),
+    ("Instuctor's interest",       "instructor_interest_median_weighted"),
+    ("Grading techniques",         "grading_techniques_median_weighted"),
 ]
+
+
+def _eval_avg_median(questions):
+    if not questions:
+        return None
+    vals = [q_data.get("median") for q_data in questions.values()
+            if isinstance(q_data, dict) and q_data.get("median") is not None]
+    return round(sum(vals) / len(vals), 4) if vals else None
 
 
 def _get_median(questions, question_name):
@@ -264,13 +308,16 @@ def init_db(conn):
             departments JSONB,
             rmp_rating_count INTEGER,
             cec_eval_count INTEGER,
-            avg_instructor_contribution_median REAL,
-            avg_instructor_effectiveness_median REAL,
-            avg_course_as_whole_median REAL,
-            avg_course_content_median REAL,
-            avg_amount_learned_median REAL,
-            avg_instructor_interest_median REAL,
-            avg_grading_techniques_median REAL,
+            cec_surveyed_count INTEGER,
+            cec_enrolled_count INTEGER,
+            avg_eval_median_weighted REAL,
+            avg_instructor_contribution_median_weighted REAL,
+            avg_instructor_effectiveness_median_weighted REAL,
+            avg_course_as_whole_median_weighted REAL,
+            avg_course_content_median_weighted REAL,
+            avg_amount_learned_median_weighted REAL,
+            avg_instructor_interest_median_weighted REAL,
+            avg_grading_techniques_median_weighted REAL,
             rating_tags_distribution JSONB,
             avg_quality_rating REAL,
             avg_difficulty_rating REAL,
@@ -302,6 +349,7 @@ def init_db(conn):
             surveyed INTEGER,
             enrolled INTEGER,
             questions JSONB,
+            eval_avg_median REAL,
             instructor_contribution_median REAL,
             instructor_effectiveness_median REAL,
             course_as_whole_median REAL,
@@ -361,7 +409,19 @@ def main():
 
     name_to_profs = defaultdict(list)
     for p in rmp_profs_raw:
-        name_to_profs[norm_name(p["first_name"], None, p["last_name"])].append(p)
+        name_to_profs[_rmp_dedup_key(p)].append(p)
+
+    # Merge groups where first and last name are swapped (RMP data entry error)
+    seen_reversed = set()
+    for key in list(name_to_profs.keys()):
+        if key in seen_reversed:
+            continue
+        parts = key.split()
+        if len(parts) == 2:
+            rev = f"{parts[1]} {parts[0]}"
+            if rev in name_to_profs:
+                name_to_profs[key].extend(name_to_profs.pop(rev))
+                seen_reversed.add(rev)
 
     loser_ids = set()
     winner_overrides = {}
@@ -438,6 +498,9 @@ def main():
             "avg_difficulty_rating":         ov.get("avg_difficulty_rating", p["avg_difficulty_rating"]),
             "rmp_rating_count":            ov.get("rmp_rating_count", p["rmp_rating_count"]),
             "cec_eval_count":             None,
+            "cec_surveyed_count":         None,
+            "cec_enrolled_count":         None,
+            "avg_eval_median_weighted":            None,
             **{f"avg_{col}": None for _, col in MEDIAN_QUESTIONS},
             "would_take_again_percent": ov.get("would_take_again_percent", p["would_take_again"]),
             "cec_courses":                None,
@@ -464,13 +527,49 @@ def main():
     # Precompute trigrams for all RMP professor names
     rmp_norm_trgms = {name: pg_trigrams(name) for name in rmp_norm_to_prof}
 
-    cec_names = list({e["instructor_name"] for e in cec_evals_raw if e["instructor_name"]})
+    # ── CEC name deduplication ──
+    # Group variants by (first, last), then split any group where two variants
+    # exact-match *different* RMP professors — that's a reliable signal they're
+    # different people sharing the same first+last name.
+    def _exact_rmp_id(name):
+        normalized = strip_accents(' '.join(name.strip().lower().split()))
+        matches = rmp_norm_to_prof.get(normalized, [])
+        return matches[0]["rmp_id"] if len(matches) == 1 else None
+
+    _cec_name_groups = defaultdict(list)
+    for name in {e["instructor_name"] for e in cec_evals_raw if e["instructor_name"]}:
+        _cec_name_groups[_fl_key(name)].append(name)
+
+    cec_variant_to_canonical = {}
+    for group in _cec_name_groups.values():
+        # Sub-group by exact RMP match; None (no match) stays with the matched sub-group
+        # unless every variant is unmatched, in which case they all stay together.
+        by_rmp = defaultdict(list)
+        for name in group:
+            by_rmp[_exact_rmp_id(name)].append(name)
+
+        matched_ids = [k for k in by_rmp if k is not None]
+        if len(matched_ids) > 1:
+            # Multiple distinct RMP profs → split: each matched ID is its own group,
+            # unmatched variants go with whichever matched group shares their (first, last)
+            # but since we can't tell, keep unmatched as a separate group too.
+            subgroups = list(by_rmp.values())
+        else:
+            # All agree (same match or all unmatched) → one group
+            subgroups = [group]
+
+        for subgroup in subgroups:
+            canonical = max(subgroup, key=lambda n: (1 if parse_name(n)[1] else 0, len(n)))
+            for variant in subgroup:
+                cec_variant_to_canonical[variant] = canonical
+
+    cec_names = list(set(cec_variant_to_canonical.values()))
     cec_name_to_prof = {}
     merged_prof_ids = set()
     exact_matches = fuzzy_matches = late_merges = new_profs = 0
 
     for cec_name in cec_names:
-        normalized = ' '.join(cec_name.strip().lower().split())
+        normalized = strip_accents(' '.join(cec_name.strip().lower().split()))
 
         # Exact match
         profs = rmp_norm_to_prof.get(normalized, [])
@@ -549,6 +648,24 @@ def main():
                 late_merges += 1
                 continue
 
+        # Hybrid match — token set ratio with shared-token guard
+
+        hybrid_scored = sorted(
+            [(name, score)
+             for name in rmp_norm_to_prof
+             if (score := token_set_ratio(normalized, name)) >= HYBRID_THRESHOLD
+             and _shared_long_tokens(normalized, name) >= HYBRID_MIN_SHARED],
+            key=lambda x: -x[1],
+        )
+
+        if len(hybrid_scored) == 1:
+            prof = rmp_norm_to_prof[hybrid_scored[0][0]][0]
+            prof["source"] = "both"
+            apply_cec_name(prof, cec_name)
+            cec_name_to_prof[cec_name] = prof
+            fuzzy_matches += 1
+            continue
+
         # No match — new CEC-only professor
         _first, _middle, _last = parse_name(cec_name)
         prof = {
@@ -561,6 +678,8 @@ def main():
             "departments": None,
             "avg_quality_rating": None, "avg_difficulty_rating": None,
             "rmp_rating_count": 0, "cec_eval_count": None,
+            "cec_surveyed_count": None, "cec_enrolled_count": None,
+            "avg_eval_median_weighted": None,
             **{f"avg_{col}": None for _, col in MEDIAN_QUESTIONS},
             "would_take_again_percent": None,
             "cec_courses": None,
@@ -584,34 +703,50 @@ def main():
     # ── STEP 4 & 5: CEC EVALUATIONS + TITLES ──
     print("\nBuilding CEC evaluations and computing titles...")
 
-    title_tracker = {}  # instructor_name -> (sort_key, title_text)
-    cec_eval_counts = defaultdict(int)      # instructor_name -> eval count
-    cec_course_data = defaultdict(lambda: defaultdict(set))   # instructor_name -> course_code -> {(quarter, year)}
-    cec_course_sections = defaultdict(lambda: defaultdict(int))  # instructor_name -> course_code -> section count
-    cec_eval_instructors = []
+    title_tracker = {}
+    cec_eval_counts = defaultdict(int)
+    cec_surveyed_counts = defaultdict(int)
+    cec_enrolled_counts = defaultdict(int)
+    cec_course_data = defaultdict(lambda: defaultdict(set))
+    cec_course_sections = defaultdict(lambda: defaultdict(int))
+    cec_median_accum = defaultdict(lambda: defaultdict(list))  # instructor -> col -> [(val, surveyed)]
+    cec_eval_avg_accum = defaultdict(list)                     # instructor -> [(eval_avg, surveyed)]
+    cec_eval_instructors = []  # canonical names, used for professor_id linking
     cec_eval_rows = []
     for e in cec_evals_raw:
-        instructor = e["instructor_name"]
+        raw_instructor = e["instructor_name"]
+        canonical_instructor = cec_variant_to_canonical.get(raw_instructor, raw_instructor) if raw_instructor else None
         quarter, year = parse_quarter(e["quarter"])
 
-        if instructor and e["title"]:
+        if canonical_instructor and e["title"]:
             key = quarter_sort_key(quarter, year)
-            if key > title_tracker.get(instructor, (0, None))[0]:
-                title_tracker[instructor] = (key, e["title"])
+            if key > title_tracker.get(canonical_instructor, (0, None))[0]:
+                title_tracker[canonical_instructor] = (key, e["title"])
 
-        if instructor:
-            cec_eval_counts[instructor] += 1
+        if canonical_instructor:
+            cec_eval_counts[canonical_instructor] += 1
+            cec_surveyed_counts[canonical_instructor] += e["surveyed"] or 0
+            cec_enrolled_counts[canonical_instructor] += e["enrolled"] or 0
             if e["course_code"] and quarter and year:
-                cec_course_data[instructor][e["course_code"]].add((quarter, year))
-                cec_course_sections[instructor][e["course_code"]] += 1
+                cec_course_data[canonical_instructor][e["course_code"]].add((quarter, year))
+                cec_course_sections[canonical_instructor][e["course_code"]] += 1
 
+        surveyed = e["surveyed"] or 0
+        eval_avg = _eval_avg_median(e["questions"])
         medians = [_get_median(e["questions"], q) for q, _ in MEDIAN_QUESTIONS]
-        cec_eval_instructors.append(instructor)
+        if canonical_instructor:
+            if eval_avg is not None:
+                cec_eval_avg_accum[canonical_instructor].append((eval_avg, surveyed))
+            for (_, col), val in zip(MEDIAN_QUESTIONS, medians):
+                if val is not None:
+                    cec_median_accum[canonical_instructor][col].append((val, surveyed))
+        cec_eval_instructors.append(canonical_instructor)
         cec_eval_rows.append((
             e["url"], e["course_name"], e["course_code"], e["section"],
-            instructor, e["title"], quarter, year, e["form_type"],
+            raw_instructor, e["title"], quarter, year, e["form_type"],
             e["surveyed"], e["enrolled"],
             _format_questions(e["questions"]),
+            eval_avg,
             *medians,
         ))
 
@@ -620,34 +755,32 @@ def main():
         if prof is not None:
             prof["title"] = title
 
-    # Accumulate medians per instructor for professor-level averages
-    cec_median_accum = defaultdict(lambda: defaultdict(list))  # instructor -> col_name -> [values]
-    for row, instructor in zip(cec_eval_rows, cec_eval_instructors):
-        if not instructor:
-            continue
-        for i, (_, col) in enumerate(MEDIAN_QUESTIONS):
-            val = row[12 + i]  # medians start after the 12 fixed columns
-            if val is not None:
-                cec_median_accum[instructor][col].append(val)
-
-    # Aggregate cec_eval_count and cec_courses per professor
+    # Aggregate cec_eval_count, surveyed/enrolled totals, and cec_courses per professor
     prof_cec_counts = defaultdict(int)
+    prof_cec_surveyed = defaultdict(int)
+    prof_cec_enrolled = defaultdict(int)
     prof_cec_courses = defaultdict(lambda: defaultdict(set))
     prof_cec_sections = defaultdict(lambda: defaultdict(int))
-    prof_median_accum = defaultdict(lambda: defaultdict(list))
+    prof_median_accum = defaultdict(lambda: defaultdict(list))  # pid -> col -> [(val, surveyed)]
+    prof_eval_avg_accum = defaultdict(list)  # pid -> [(eval_avg, surveyed)]
     for instructor, prof in cec_name_to_prof.items():
         pid = id(prof)
         prof_cec_counts[pid] += cec_eval_counts.get(instructor, 0)
+        prof_cec_surveyed[pid] += cec_surveyed_counts.get(instructor, 0)
+        prof_cec_enrolled[pid] += cec_enrolled_counts.get(instructor, 0)
         for code, quarters in cec_course_data.get(instructor, {}).items():
             prof_cec_courses[pid][code].update(quarters)
             prof_cec_sections[pid][code] += cec_course_sections[instructor].get(code, 0)
-        for col, vals in cec_median_accum.get(instructor, {}).items():
-            prof_median_accum[pid][col].extend(vals)
+        for col, pairs in cec_median_accum.get(instructor, {}).items():
+            prof_median_accum[pid][col].extend(pairs)
+        prof_eval_avg_accum[pid].extend(cec_eval_avg_accum.get(instructor, []))
 
     for prof in professors:
         pid = id(prof)
         count = prof_cec_counts.get(pid)
         prof["cec_eval_count"] = count if count else None
+        prof["cec_surveyed_count"] = prof_cec_surveyed.get(pid) or None
+        prof["cec_enrolled_count"] = prof_cec_enrolled.get(pid) or None
         courses = prof_cec_courses.get(pid, {})
         prof["cec_courses"] = json.dumps(sorted(
             [{"code": code,
@@ -657,9 +790,9 @@ def main():
              for code, quarters in courses.items()],
             key=lambda x: -x["quarters_count"]
         )) if courses else None
+        prof["avg_eval_median_weighted"] = _wavg(prof_eval_avg_accum.get(pid, []))
         for _, col in MEDIAN_QUESTIONS:
-            vals = prof_median_accum[pid].get(col, [])
-            prof[f"avg_{col}"] = round(sum(vals) / len(vals), 4) if vals else None
+            prof[f"avg_{col}"] = _wavg(prof_median_accum[pid].get(col, []))
 
     print(f"  Built {len(cec_eval_rows):,} evaluations")
 
@@ -681,9 +814,10 @@ def main():
     returned = psycopg2.extras.execute_values(plain_cur, """
         INSERT INTO professors
         (first_name, middle_name, last_name, title, school, departments,
-         rmp_rating_count, cec_eval_count, avg_instructor_contribution_median, avg_instructor_effectiveness_median,
-         avg_course_as_whole_median, avg_course_content_median, avg_amount_learned_median,
-         avg_instructor_interest_median, avg_grading_techniques_median,
+         rmp_rating_count, cec_eval_count, cec_surveyed_count, cec_enrolled_count,
+         avg_eval_median_weighted, avg_instructor_contribution_median_weighted, avg_instructor_effectiveness_median_weighted,
+         avg_course_as_whole_median_weighted, avg_course_content_median_weighted, avg_amount_learned_median_weighted,
+         avg_instructor_interest_median_weighted, avg_grading_techniques_median_weighted,
          rating_tags_distribution, avg_quality_rating, avg_difficulty_rating, would_take_again_percent,
          is_online_percent, attendance_is_mandatory_percent,
          grade_distribution, rating_distribution, difficulty_distribution,
@@ -693,9 +827,10 @@ def main():
     """, [(
         p["first_name"], p["middle_name"], p["last_name"], p["title"], p["school"],
         p["departments"], p["rmp_rating_count"], p["cec_eval_count"],
-        p["avg_instructor_contribution_median"], p["avg_instructor_effectiveness_median"],
-        p["avg_course_as_whole_median"], p["avg_course_content_median"], p["avg_amount_learned_median"],
-        p["avg_instructor_interest_median"], p["avg_grading_techniques_median"],
+        p["cec_surveyed_count"], p["cec_enrolled_count"], p["avg_eval_median_weighted"],
+        p["avg_instructor_contribution_median_weighted"], p["avg_instructor_effectiveness_median_weighted"],
+        p["avg_course_as_whole_median_weighted"], p["avg_course_content_median_weighted"], p["avg_amount_learned_median_weighted"],
+        p["avg_instructor_interest_median_weighted"], p["avg_grading_techniques_median_weighted"],
         p["rating_tags_distribution"],
         p["avg_quality_rating"], p["avg_difficulty_rating"], p["would_take_again_percent"],
         p["is_online_percent"], p["attendance_is_mandatory_percent"],
@@ -725,7 +860,7 @@ def main():
         INSERT INTO cec_evaluations
         (professor_id, url, course_name, course_code, section, instructor_name, title,
          quarter, year, form_type, surveyed, enrolled, questions,
-         instructor_contribution_median, instructor_effectiveness_median,
+         eval_avg_median, instructor_contribution_median, instructor_effectiveness_median,
          course_as_whole_median, course_content_median, amount_learned_median,
          instructor_interest_median, grading_techniques_median)
         VALUES %s

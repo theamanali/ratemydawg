@@ -5,7 +5,23 @@ import os
 import time
 import psycopg2
 import psycopg2.extras
+import requests
 from playwright.async_api import async_playwright
+
+def _notify(message, tags=None):
+    url = os.environ.get("NTFY_URL")
+    topic = os.environ.get("NTFY_TOPIC")
+    token = os.environ.get("NTFY_TOKEN")
+    if not url or not topic or not token:
+        return
+    headers = {"Authorization": f"Bearer {token}", "Title": "RateMyHusky"}
+    if tags:
+        headers["Tags"] = ",".join(tags)
+    try:
+        requests.post(f"{url}/{topic}", data=message, headers=headers, timeout=5)
+    except Exception:
+        pass
+
 
 BASE_URL = "https://www.washington.edu/cec"
 TOC_URL = f"{BASE_URL}/toc.html"
@@ -234,6 +250,7 @@ async def main():
         page = await context.new_page()
         await page.goto(TOC_URL)
         print("\nBrowser opened. Please log in with your UW NetID...")
+        _notify("CEC scraper: browser open — please log in with your UW NetID", tags=["key"])
 
         # Wait for letter TOC links to appear — only visible when authenticated
         try:

@@ -2,3 +2,5 @@ requests
 psycopg2-binary
 playwright
 nameparser
+python-dotenv
+rapidfuzz

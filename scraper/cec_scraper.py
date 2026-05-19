@@ -290,7 +290,7 @@ async def main(force=False):
         if total_new == 0:
             print("Nothing new to scrape.")
             await browser.close()
-            return
+            return False
 
         all_new_links = [
             link for letter in LETTERS
@@ -302,6 +302,7 @@ async def main(force=False):
         await browser.close()
 
     print(f"\nDone! {len(existing_urls) + total_new:,} total evaluations in DB")
+    return True
 
 
 if __name__ == "__main__":

@@ -34,8 +34,9 @@ def run_step(name, fn, *args, **kwargs):
     print("=" * 60)
     notify(f"{name} started", tags=["hourglass_flowing_sand"])
     try:
-        fn(*args, **kwargs)
+        result = fn(*args, **kwargs)
         notify(f"{name} completed successfully", tags=["white_check_mark"])
+        return result
     except Exception as e:
         notify(f"{name} failed: {e}", priority="high", tags=["x"])
         raise
@@ -54,15 +55,19 @@ def main():
     args = parse_args()
     run_all = not args.rmp and not args.cec and not args.clean
 
+    has_new_data = False
+
     if args.rmp or run_all:
-        run_step("RMP scraper", rmp_scraper.main, force=args.force)
+        has_new_data = run_step("RMP scraper", rmp_scraper.main, force=args.force) or has_new_data
 
     if args.cec or run_all:
         import cec_scraper
-        run_step("CEC scraper", lambda: asyncio.run(cec_scraper.main(force=args.force)))
+        has_new_data = run_step("CEC scraper", lambda: asyncio.run(cec_scraper.main(force=args.force))) or has_new_data
 
-    if args.clean or run_all:
+    if args.clean or (run_all and has_new_data):
         run_step("Cleaner", cleaner.main)
+    elif run_all and not has_new_data:
+        print("No new data — skipping cleaner")
 
 
 if __name__ == "__main__":

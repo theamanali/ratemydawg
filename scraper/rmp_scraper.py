@@ -286,6 +286,7 @@ def main(force=False):
         conn.close()
 
     print(f"\nAll schools complete!")
+    return bool(all_professors or all_ratings)
 
 
 if __name__ == "__main__":

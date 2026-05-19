@@ -6,7 +6,10 @@ import time
 import psycopg2
 import psycopg2.extras
 import requests
+from dotenv import load_dotenv
 from playwright.async_api import async_playwright
+
+load_dotenv()
 
 def _notify(message, tags=None):
     url = os.environ.get("NTFY_URL")
@@ -238,10 +241,14 @@ async def scrape_all(context, links):
     print(f"\r{len(scraped):,} evaluations saved to DB")
 
 
-async def main():
-    print("Loading existing evaluations from DB...", end="", flush=True)
-    existing_urls = get_existing_urls()
-    print(f"\r{len(existing_urls):,} previously scraped evaluations loaded")
+async def main(force=False):
+    if force:
+        print("Force mode — re-scraping all evaluations")
+        existing_urls = set()
+    else:
+        print("Loading existing evaluations from DB...", end="", flush=True)
+        existing_urls = get_existing_urls()
+        print(f"\r{len(existing_urls):,} previously scraped evaluations loaded")
 
     async with async_playwright() as p:
         # Visible browser for manual UW NetID login

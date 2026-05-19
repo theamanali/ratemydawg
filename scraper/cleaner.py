@@ -7,8 +7,11 @@ import unicodedata
 import psycopg2
 import psycopg2.extras
 from collections import defaultdict
+from dotenv import load_dotenv
 from nameparser import HumanName
 from rapidfuzz.fuzz import token_set_ratio
+
+load_dotenv()
 
 DB_URL = os.environ["DATABASE_URL"]
 

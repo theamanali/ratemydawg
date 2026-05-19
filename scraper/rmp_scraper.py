@@ -4,8 +4,10 @@ import sys
 import time
 import psycopg2.extras
 import requests
+from dotenv import load_dotenv
 
-FORCE = "--force" in sys.argv
+load_dotenv()
+
 
 RMP_BASE_URL = "https://www.ratemyprofessors.com"
 GRAPHQL_URL = f"{RMP_BASE_URL}/graphql"
@@ -131,7 +133,8 @@ def fetch_ratings_batch(professor_ids):
     return post_with_retry(f"query {{ {aliases} }}")
 
 
-def main():
+def main(force=False):
+    force = force or "--force" in sys.argv
     conn = psycopg2.connect(DB_URL, sslmode="require")
     init_db(conn)
 
@@ -178,7 +181,7 @@ def main():
             new_prof_ids = {p["id"] for p in professors if p["id"] not in existing}
             rating_changed_ids = {
                 p["id"] for p in professors
-                if p["numRatings"] > 0 and (FORCE or p["numRatings"] != existing.get(p["id"]))
+                if p["numRatings"] > 0 and (force or p["numRatings"] != existing.get(p["id"]))
             }
 
             profs_to_upsert = new_prof_ids | rating_changed_ids

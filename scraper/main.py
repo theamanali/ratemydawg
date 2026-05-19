@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import os
-import sys
 import requests
 from dotenv import load_dotenv
 import rmp_scraper
@@ -55,15 +54,12 @@ def main():
     args = parse_args()
     run_all = not args.rmp and not args.cec and not args.clean
 
-    if args.force:
-        sys.argv.append("--force")
-
     if args.rmp or run_all:
-        run_step("RMP scraper", rmp_scraper.main)
+        run_step("RMP scraper", rmp_scraper.main, force=args.force)
 
     if args.cec or run_all:
         import cec_scraper
-        run_step("CEC scraper", lambda: asyncio.run(cec_scraper.main()))
+        run_step("CEC scraper", lambda: asyncio.run(cec_scraper.main(force=args.force)))
 
     if args.clean or run_all:
         run_step("Cleaner", cleaner.main)

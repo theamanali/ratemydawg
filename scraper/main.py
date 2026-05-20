@@ -17,7 +17,7 @@ def notify(message, title=None, priority="default", tags=None):
         return
     headers = {
         "Authorization": f"Bearer {token}",
-        "Title": title or "RateMyHusky",
+        "Title": title or "RateMyDawg",
         "Priority": priority,
     }
     if tags:

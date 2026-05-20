@@ -31,7 +31,8 @@ function ratingColor(value: number, reverse = false, min = 1, max = 5): string {
   const t = Math.max(0, Math.min(1, reverse ? 1 - (value - min) / (max - min) : (value - min) / (max - min)))
   const r = Math.round(t < 0.5 ? 255 : 255 * (1 - t) * 2)
   const g = Math.round(t > 0.5 ? 255 : 255 * t * 2)
-  return `rgb(${r}, ${g}, 0)`
+  const b = Math.round(20 * Math.sin(Math.PI * t))
+  return `rgb(${r}, ${g}, ${b})`
 }
 
 function createTooltip() {
@@ -44,28 +45,72 @@ function createTooltip() {
       position: fixed;
       background: #fff;
       color: rgb(33, 37, 41);
-      border: 1px solid rgba(0,0,0,0.15);
-      border-radius: 6px;
-      padding: 8px 12px;
-      font-size: 13px;
+      border: 1px solid rgba(0,0,0,0.12);
+      border-top: 2.5px solid var(--rmd-tip-color, rgba(100,180,100,0.8));
+      border-radius: 7px;
+      padding: 10px 13px;
+      font-size: 1rem;
+      font-weight: 400;
       font-family: 'Open Sans', sans-serif;
-      max-width: 360px;
+      max-width: 268px;
       pointer-events: none;
       z-index: 99999;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.13), 0 1px 5px rgba(0,0,0,0.07);
       line-height: 1.5;
-      display: none;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(3px);
+      transition: opacity 0.13s ease, transform 0.13s ease, visibility 0s linear 0.13s;
+    }
+    #rmd-tooltip.rmd-tip-on {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+      transition: opacity 0.13s ease, transform 0.13s ease;
     }
     #rmd-tooltip strong {
       display: block;
-      font-size: 13px;
-      font-weight: 700;
+      font-size: 1.125rem;
+      font-weight: 600;
       margin-bottom: 4px;
       color: rgb(33, 37, 41);
     }
-    #rmd-tooltip span {
-      color: rgb(90, 90, 90);
-      font-size: 12px;
+    #rmd-tooltip::before, #rmd-tooltip::after {
+      content: '';
+      position: absolute;
+      left: var(--rmd-arrow-x, 50%);
+      transform: translateX(-50%);
+      pointer-events: none;
+      width: 0;
+      height: 0;
+    }
+    #rmd-tooltip::before {
+      top: -7px;
+      border: 6px solid transparent;
+      border-top-width: 0;
+      border-bottom-color: var(--rmd-tip-color, rgba(100,180,100,0.8));
+    }
+    #rmd-tooltip::after {
+      top: -5px;
+      border: 5px solid transparent;
+      border-top-width: 0;
+      border-bottom-color: #fff;
+    }
+    #rmd-tooltip.rmd-tip-above::before {
+      top: auto;
+      bottom: -7px;
+      border-top-width: 6px;
+      border-bottom-width: 0;
+      border-top-color: rgba(0,0,0,0.15);
+      border-bottom-color: transparent;
+    }
+    #rmd-tooltip.rmd-tip-above::after {
+      top: auto;
+      bottom: -5px;
+      border-top-width: 5px;
+      border-bottom-width: 0;
+      border-top-color: #fff;
+      border-bottom-color: transparent;
     }
   `
   document.head.appendChild(style)
@@ -73,11 +118,6 @@ function createTooltip() {
   const tooltip = document.createElement("div")
   tooltip.id = "rmd-tooltip"
   document.body.appendChild(tooltip)
-
-  document.addEventListener("mousemove", (e) => {
-    tooltip.style.left = e.clientX + 14 + "px"
-    tooltip.style.top = e.clientY + 14 + "px"
-  })
 
   document.addEventListener("mouseover", (e) => {
     const pill = (e.target as Element).closest("[data-rmd-key]")
@@ -90,16 +130,39 @@ function createTooltip() {
     if (statRaw) {
       const { text, color } = JSON.parse(statRaw)
       const [num, ...rest] = text.split(" ")
-      statHtml = `<span style="display:block; color:rgb(33,37,41); margin-bottom:4px; font-size:12px;"><span style="background:${color}; border-radius:4px; padding:1px 5px; font-weight:600; color:rgb(33,37,41); margin-right:3px;">${num}</span><span>${rest.join(" ")}</span></span>`
+      statHtml = `<span style="display:block; color:rgb(33,37,41); margin-bottom:4px; font-size:1rem; font-family:'Open Sans',sans-serif;"><span style="background:${color}; border-radius:4px; padding:1px 5px; font-weight:600; color:rgb(33,37,41); margin-right:3px;">${num}</span><span>${rest.join(" ")}</span></span>`
     }
-    tooltip.innerHTML = `<strong>${info.title}</strong>${statHtml}<span>${info.desc}</span>`
-    tooltip.style.display = "block"
+    const pillBox = (pill as HTMLElement).querySelector("span:last-child") as HTMLElement | null
+    if (pillBox?.style.background) tooltip.style.setProperty("--rmd-tip-color", pillBox.style.background)
+    const divider = statHtml ? `<span style="display:block; border-top:1px solid rgba(0,0,0,0.08); margin:6px 0 5px;"></span>` : ""
+    tooltip.innerHTML = `<strong>${info.title}</strong>${statHtml}${divider}<span style="display:block; color:rgb(90,90,90); font-size:0.875rem; font-family:'Open Sans',sans-serif;">${info.desc}</span>`
+
+    // Anchor to the pill: center below, flip above if insufficient room, clamp to viewport
+    const rect = (pillBox ?? pill as HTMLElement).getBoundingClientRect()
+    tooltip.style.left = "0px"  // reset before measuring — fixed elements' width is constrained by (viewport_width - left)
+    const tw = tooltip.offsetWidth
+    const th = tooltip.offsetHeight
+    const gap = 7
+    const margin = 8
+    let x = rect.left + rect.width / 2 - tw / 2
+    let y = rect.bottom + gap
+    const isAbove = y + th > window.innerHeight - margin
+    if (isAbove) y = rect.top - th - gap
+    x = Math.max(margin, Math.min(x, window.innerWidth - tw - margin))
+    y = Math.max(margin, y)
+    // Arrow x offset: pill center relative to tooltip left, clamped inside tooltip
+    const arrowX = Math.max(12, Math.min(tw - 12, rect.left + rect.width / 2 - x))
+    tooltip.style.setProperty("--rmd-arrow-x", arrowX + "px")
+    tooltip.style.left = x + "px"
+    tooltip.style.top  = y + "px"
+    tooltip.classList.toggle("rmd-tip-above", isAbove)
+    tooltip.classList.add("rmd-tip-on")
   })
 
   document.addEventListener("mouseout", (e) => {
     const leaving = (e.target as Element).closest("[data-rmd-key]")
     const entering = (e.relatedTarget as Element)?.closest("[data-rmd-key]")
-    if (leaving && leaving !== entering) tooltip.style.display = "none"
+    if (leaving && leaving !== entering) tooltip.classList.remove("rmd-tip-on")
   })
 
   return tooltip
@@ -113,22 +176,23 @@ function pill(
   statLine: string | null = null
 ): HTMLElement {
   const bg = color ?? "rgb(180,180,180)"
-  const text = value ?? "N/A"
+  const text = value ?? "?"
 
   const wrapper = document.createElement("span")
   wrapper.setAttribute("data-rmd-key", key)
   if (statLine) wrapper.setAttribute("data-rmd-stat", JSON.stringify({ text: statLine, color: bg }))
   wrapper.style.cssText =
-    "display:inline-flex; align-items:center; gap:2px; font-size:11.375px; font-family:'Open Sans',sans-serif; white-space:nowrap; cursor:default;"
+    "display:inline-flex; align-items:center; gap:2px; font-size:0.875rem; font-family:'Open Sans',sans-serif; white-space:nowrap; cursor:default;"
 
   const label = document.createElement("span")
-  label.style.cssText = "color:rgb(33,37,41); font-weight:400;"
+  label.style.cssText = "color:rgb(90,90,90); font-weight:500;"
   label.textContent = key
 
   const box = document.createElement("span")
   const isNA = bg === "rgb(180,180,180)"
   const shouldAnimate = animate && !isNA
-  box.style.cssText = `background:${shouldAnimate ? "rgb(255,0,0)" : bg}; border-radius:4px; padding:2px 5px; color:rgb(33,37,41); font-weight:600; display:inline-block; line-height:11.375px;${shouldAnimate ? " transition:background 0.6s ease;" : ""}`
+  const naStyles = isNA ? " border:1.5px dashed rgb(180,180,180); background:transparent; color:rgb(160,160,160);" : ""
+  box.style.cssText = `background:${shouldAnimate ? "rgb(255,0,20)" : (isNA ? "transparent" : bg)}; border-radius:4px; padding:2px 5px; color:${isNA ? "rgb(160,160,160)" : "rgb(33,37,41)"}; font-weight:600; display:inline-block; line-height:1;${naStyles}${shouldAnimate ? " transition:background 0.6s ease;" : ""}`
   box.textContent = shouldAnimate ? (text.endsWith("%") ? "0%" : "0.0") : text
 
   if (shouldAnimate) {
@@ -163,6 +227,7 @@ interface Professor {
   rmp_rating_count: number | null
   cec_surveyed_count: number | null
   cec_eval_count: number | null
+  cec_locked?: boolean
 }
 
 function injectBadge(el: HTMLElement, prof: Professor, animate = true) {
@@ -184,7 +249,23 @@ function injectBadge(el: HTMLElement, prof: Professor, animate = true) {
   badge.appendChild(pill("QR", qr != null ? qr.toFixed(1) : null, qr != null ? ratingColor(qr) : null, animate, qr != null ? `${qr.toFixed(1)} calculated${rmpSuffix}` : null))
   badge.appendChild(pill("DR", dr != null ? dr.toFixed(1) : null, dr != null ? ratingColor(dr, true) : null, animate, dr != null ? `${dr.toFixed(1)} calculated${rmpSuffix}` : null))
   badge.appendChild(pill("WTA", wta != null ? `${wta.toFixed(0)}%` : null, wta != null ? ratingColor(wta, false, 0, 100) : null, animate, wta != null ? `${wta.toFixed(0)}% of <b>${rmpCount}</b> reviewers would take again` : null))
-  badge.appendChild(pill("CES", ces != null ? ces.toFixed(1) : null, ces != null ? ratingColor(ces, false, 0, 5) : null, animate, ces != null ? `${ces.toFixed(1)}${cecSuffix}` : null))
+
+  const sep = document.createElement("span")
+  sep.style.cssText = "width:1px; height:1em; background:rgba(0,0,0,0.12); border-radius:1px; margin:0 1px; flex-shrink:0; align-self:center;"
+  badge.appendChild(sep)
+
+  if (prof.cec_locked) {
+    const lockedPill = pill("CES", null, null, false, null)
+    const lockBox = lockedPill.lastElementChild as HTMLElement
+    lockBox.style.cssText = "background:rgb(235,235,235); border-radius:4px; padding:2px 5px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:18px;"
+    lockBox.innerHTML = `<svg width="9" height="10" viewBox="0 0 9 10" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="0.75" y="4" width="7.5" height="5.75" rx="1.25" fill="rgb(120,120,120)"/><path d="M2 4V2.75a2.5 2.5 0 0 1 5 0V4" stroke="rgb(120,120,120)" stroke-width="1.5" stroke-linecap="round"/></svg>`
+    lockedPill.style.cursor = "pointer"
+    lockedPill.title = "Sign in with your UW account to see CEC scores"
+    lockedPill.addEventListener("click", () => chrome.runtime.sendMessage({ type: "OPEN_POPUP" }))
+    badge.appendChild(lockedPill)
+  } else {
+    badge.appendChild(pill("CES", ces != null ? ces.toFixed(1) : null, ces != null ? ratingColor(ces, false, 0, 5) : null, animate, ces != null ? `${ces.toFixed(1)}${cecSuffix}` : null))
+  }
 
   el.appendChild(badge)
 }
@@ -209,9 +290,13 @@ async function matchAndInject() {
 
   if (uncached.length) {
     try {
+      const { jwt } = await chrome.storage.local.get("jwt")
+      const headers: Record<string, string> = { "Content-Type": "application/json" }
+      if (jwt) headers["Authorization"] = `Bearer ${jwt}`
+
       const res = await fetch(`${API_BASE}/professors/match/batch`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ names: uncached }),
       })
       if (res.ok) {
@@ -254,6 +339,24 @@ function waitForTable(callback: () => void) {
 
 // Run when table appears, re-run on URL changes (MyPlan is a SPA)
 waitForTable(matchAndInject)
+
+// Refresh when JWT changes (sign-in or sign-out)
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && "jwt" in changes) {
+    Object.keys(cache).forEach(k => delete cache[k])
+    document.querySelectorAll(".rmd-badge").forEach(el => el.remove())
+    matchAndInject()
+  }
+})
+
+// Listen for refresh message as fallback
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === "REFRESH") {
+    Object.keys(cache).forEach(k => delete cache[k])
+    document.querySelectorAll(".rmd-badge").forEach(el => el.remove())
+    matchAndInject()
+  }
+})
 
 let lastUrl = location.href
 let debounceTimer: ReturnType<typeof setTimeout> | null = null

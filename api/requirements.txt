@@ -5,3 +5,6 @@ requests
 slowapi
 python-dotenv
 nameparser
+pyjwt
+msal
+cryptography

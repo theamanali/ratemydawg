@@ -237,48 +237,48 @@ def main(force=False):
                 print(f"  Batch {batch_num}/{total_batches}: {batch_ratings:,} ratings")
                 time.sleep(0.5)
 
-        # Step 3: write to DB
+        # Step 3: write to DB — professors + ratings + WTA in one transaction
         print("\nSaving to DB...")
-        if all_professors:
-            cur = conn.cursor()
-            psycopg2.extras.execute_values(cur, """
-                INSERT INTO rmp_professors_raw (id, school_id, first_name, last_name, department, avg_quality_rating, avg_difficulty_rating, rmp_rating_count, would_take_again, course_codes)
-                VALUES %s
-                ON CONFLICT (id) DO UPDATE SET
-                    avg_quality_rating = EXCLUDED.avg_quality_rating,
-                    avg_difficulty_rating = EXCLUDED.avg_difficulty_rating,
-                    rmp_rating_count = EXCLUDED.rmp_rating_count,
-                    would_take_again = EXCLUDED.would_take_again,
-                    course_codes = EXCLUDED.course_codes,
-                    updated_at = CURRENT_TIMESTAMP
-            """, all_professors)
+        cur = conn.cursor()
+        try:
+            if all_professors:
+                psycopg2.extras.execute_values(cur, """
+                    INSERT INTO rmp_professors_raw (id, school_id, first_name, last_name, department, avg_quality_rating, avg_difficulty_rating, rmp_rating_count, would_take_again, course_codes)
+                    VALUES %s
+                    ON CONFLICT (id) DO UPDATE SET
+                        avg_quality_rating = EXCLUDED.avg_quality_rating,
+                        avg_difficulty_rating = EXCLUDED.avg_difficulty_rating,
+                        rmp_rating_count = EXCLUDED.rmp_rating_count,
+                        would_take_again = EXCLUDED.would_take_again,
+                        course_codes = EXCLUDED.course_codes,
+                        updated_at = CURRENT_TIMESTAMP
+                """, all_professors)
+
+            if all_ratings:
+                psycopg2.extras.execute_values(cur, """
+                    INSERT INTO rmp_ratings_raw
+                    (id, professor_id, class, date, comment, quality_rating,
+                     difficulty_rating, grade, would_take_again, is_online,
+                     attendance_mandatory, textbook_used, rating_tags)
+                    VALUES %s
+                    ON CONFLICT (id) DO NOTHING
+                """, all_ratings)
+
+            if wta_updates:
+                psycopg2.extras.execute_values(cur, """
+                    UPDATE rmp_professors_raw SET would_take_again = data.pct
+                    FROM (VALUES %s) AS data(id, pct)
+                    WHERE rmp_professors_raw.id = data.id
+                """, [(pid, pct) for pid, pct in wta_updates.items()])
+
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
             cur.close()
         print(f"  {len(all_professors):,} new/updated professors")
-
-        if all_ratings:
-            cur = conn.cursor()
-            psycopg2.extras.execute_values(cur, """
-                INSERT INTO rmp_ratings_raw
-                (id, professor_id, class, date, comment, quality_rating,
-                 difficulty_rating, grade, would_take_again, is_online,
-                 attendance_mandatory, textbook_used, rating_tags)
-                VALUES %s
-                ON CONFLICT (id) DO NOTHING
-            """, all_ratings)
-            conn.commit()
-            cur.close()
         print(f"  {len(all_ratings):,} new ratings")
-
-        if wta_updates:
-            cur = conn.cursor()
-            psycopg2.extras.execute_values(cur, """
-                UPDATE rmp_professors_raw SET would_take_again = data.pct
-                FROM (VALUES %s) AS data(id, pct)
-                WHERE rmp_professors_raw.id = data.id
-            """, [(pid, pct) for pid, pct in wta_updates.items()])
-            conn.commit()
-            cur.close()
         print(f"  {len(wta_updates):,} would_take_again values updated")
 
 

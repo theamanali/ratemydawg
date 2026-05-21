@@ -1,4 +1,5 @@
 import json
+import random
 import re
 import asyncio
 import os
@@ -17,7 +18,7 @@ def _notify(message, tags=None):
     token = os.environ.get("NTFY_TOKEN")
     if not url or not topic or not token:
         return
-    headers = {"Authorization": f"Bearer {token}", "Title": "RateMyHusky"}
+    headers = {"Authorization": f"Bearer {token}", "Title": "RateMyDawg"}
     if tags:
         headers["Tags"] = ",".join(tags)
     try:
@@ -29,7 +30,7 @@ def _notify(message, tags=None):
 BASE_URL = "https://www.washington.edu/cec"
 TOC_URL = f"{BASE_URL}/toc.html"
 LETTERS = list("abcdefghijklmnopqrstuvwxyz")
-CONCURRENT_PAGES = 50
+CONCURRENT_PAGES = 10
 DB_URL = os.environ["DATABASE_URL"]
 
 def get_existing_urls():
@@ -193,6 +194,7 @@ async def run_batch(context, urls, sem, scraped, failed):
     async def _worker(href):
         nonlocal completed
         async with sem:
+            await asyncio.sleep(random.uniform(0.1, 0.5))
             page = await context.new_page()
             try:
                 result = await parse_evaluation_page(page, href)

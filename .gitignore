@@ -1,7 +1,10 @@
-.env
+.env*
 __pycache__/
 *.pyc
 .DS_Store
 .claude/
 key.pem
 cert.pem
+.idea/
+.venv/
+*.egg-info/

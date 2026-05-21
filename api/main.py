@@ -1,5 +1,7 @@
+import logging
 import os
 import re
+import threading
 import time
 import unicodedata
 import psycopg2
@@ -21,22 +23,32 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 
 AZURE_CLIENT_ID = os.environ["AZURE_CLIENT_ID"]
 AZURE_TENANT_ID = os.environ["AZURE_TENANT_ID"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_DAYS = 365
+JWT_EXPIRY_DAYS = 30
 
 from cryptography.hazmat.primitives.serialization import Encoding
 
 # Support both file path and raw PEM content env vars
 _key_path = os.environ.get("AZURE_KEY_PATH")
-AZURE_PRIVATE_KEY = open(_key_path, "rb").read() if _key_path else os.environ["AZURE_PRIVATE_KEY"].encode()
+if _key_path:
+    with open(_key_path, "rb") as _f:
+        AZURE_PRIVATE_KEY = _f.read()
+else:
+    AZURE_PRIVATE_KEY = os.environ["AZURE_PRIVATE_KEY"].encode()
 
 _cert_path = os.environ.get("AZURE_CERT_PATH")
-_cert_pem = open(_cert_path, "rb").read() if _cert_path else os.environ["AZURE_CERT"].encode()
+if _cert_path:
+    with open(_cert_path, "rb") as _f:
+        _cert_pem = _f.read()
+else:
+    _cert_pem = os.environ["AZURE_CERT"].encode()
 _cert = x509.load_pem_x509_certificate(_cert_pem)
 AZURE_THUMBPRINT = hashlib.sha1(_cert.public_bytes(Encoding.DER)).hexdigest()
 
@@ -47,10 +59,18 @@ _msal_app = msal.ConfidentialClientApplication(
 )
 
 
+_TRUSTED_PROXY = os.environ.get("TRUSTED_PROXY", "").strip()
+
+
 def get_client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+    if _TRUSTED_PROXY:
+        # CF-Connecting-IP is set by Cloudflare and cannot be spoofed by the client
+        cf_ip = request.headers.get("CF-Connecting-IP")
+        if cf_ip:
+            return cf_ip.strip()
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
     return get_remote_address(request)
 
 
@@ -59,25 +79,33 @@ app = FastAPI(title="RateMyDawg API", version="1.0.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+_CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "https://myplan.uw.edu").split(",") if o.strip()]
+# chrome-extension:// origins (ID varies per install) are allowed for the background auth flow
+_CORS_ORIGIN_REGEX = os.environ.get("CORS_ORIGIN_REGEX", r"chrome-extension://.*")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=".*",
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_CORS_ORIGINS,
+    allow_origin_regex=_CORS_ORIGIN_REGEX,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 _pool = None
+_pool_lock = threading.Lock()
 
 
 def get_pool():
     global _pool
     if _pool is None:
-        _pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=1,
-            maxconn=50,
-            dsn=os.environ["DATABASE_URL"],
-            sslmode="require",
-        )
+        with _pool_lock:
+            if _pool is None:
+                _pool = psycopg2.pool.ThreadedConnectionPool(
+                    minconn=1,
+                    maxconn=50,
+                    dsn=os.environ["DATABASE_URL"],
+                    sslmode="require",
+                )
     return _pool
 
 
@@ -85,13 +113,17 @@ def get_pool():
 def db_cursor():
     pool = get_pool()
     conn = pool.getconn()
+    ok = False
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         try:
             yield cur
+            ok = True
         finally:
             cur.close()
     finally:
+        if not ok:
+            conn.rollback()
         pool.putconn(conn)
 
 
@@ -135,7 +167,7 @@ def auth_login(request: Request, body: LoginRequest):
         redirect_uri=body.redirect_uri,
     )
     if "error" in result:
-        print("MSAL error:", result.get("error"), result.get("error_description"), result.get("error_codes"))
+        logger.warning("MSAL error: %s %s %s", result.get("error"), result.get("error_description"), result.get("error_codes"))
         raise HTTPException(status_code=401, detail=result.get("error_description", "Failed to exchange code"))
 
     id_claims = result.get("id_token_claims", {})
@@ -152,6 +184,20 @@ def auth_login(request: Request, body: LoginRequest):
         "exp": datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRY_DAYS),
     }, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
+    return {"token": token}
+
+
+@app.post("/auth/refresh", tags=["Auth"])
+@limiter.limit("30/minute")
+def auth_refresh(request: Request):
+    claims = verify_jwt(request)
+    if not claims:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    token = jwt.encode(
+        {"email": claims["email"], "name": claims["name"],
+         "exp": datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRY_DAYS)},
+        JWT_SECRET, algorithm=JWT_ALGORITHM,
+    )
     return {"token": token}
 
 
@@ -172,40 +218,74 @@ def health(request: Request):
     }
 
 
-def _match_one(name: str) -> list:
-    first, middle, last = parse_name(name)
-    if not first or not last:
-        return []
+def _batch_match(names: list[str]) -> dict[str, list]:
+    parsed: dict[str, tuple] = {}
+    for name in names:
+        first, middle, last = parse_name(name)
+        if first and last:
+            parsed[name] = (first, middle, last)
 
-    base_filters = ["unaccent(lower(first_name)) = %s", "unaccent(lower(last_name)) = %s"]
-    base_params = [norm(first), norm(last)]
+    if not parsed:
+        return {name: [] for name in names}
 
-    def fetch(extra_filters=None, extra_params=None):
-        filters = base_filters + (extra_filters or [])
-        params = base_params + (extra_params or [])
-        with db_cursor() as cur:
-            cur.execute(
-                f"SELECT * FROM professors WHERE {' AND '.join(filters)} ORDER BY rmp_rating_count DESC NULLS LAST",
-                params,
-            )
-            return cur.fetchall()
+    pairs = list({(norm(first), norm(last)) for first, _, last in parsed.values()})
 
-    if middle:
-        results = fetch()
-        if len(results) <= 1:
-            return results
-        query_middle = norm(middle)
-        for char_count in range(1, len(query_middle) + 1):
-            prefix = query_middle[:char_count]
-            filtered = [r for r in results if r["middle_name"] and norm(r["middle_name"]).startswith(prefix)]
-            if len(filtered) == 1:
-                return filtered
-            if filtered:
-                results = filtered
-        return results
-    else:
-        results = fetch(["middle_name IS NULL"])
-        return results if results else fetch()
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT * FROM professors"
+            " WHERE (f_unaccent(lower(first_name)), f_unaccent(lower(last_name))) IN %s"
+            " ORDER BY rmp_rating_count DESC NULLS LAST",
+            (tuple(pairs),),
+        )
+        rows = cur.fetchall()
+
+    by_key: dict[tuple, list] = {}
+    for row in rows:
+        key = (norm(row["first_name"] or ""), norm(row["last_name"] or ""))
+        by_key.setdefault(key, []).append(row)
+
+    results: dict[str, list] = {}
+    for name in names:
+        if name not in parsed:
+            results[name] = []
+            continue
+        first, middle, last = parsed[name]
+        candidates = list(by_key.get((norm(first), norm(last)), []))
+        if not middle:
+            no_mid = [r for r in candidates if not r["middle_name"]]
+            results[name] = no_mid if no_mid else candidates
+        elif len(candidates) <= 1:
+            results[name] = candidates
+        else:
+            query_middle = norm(middle)
+            filtered = candidates
+            for i in range(1, len(query_middle) + 1):
+                prefix = query_middle[:i]
+                narrowed = [r for r in filtered if r["middle_name"] and norm(r["middle_name"]).startswith(prefix)]
+                if len(narrowed) == 1:
+                    filtered = narrowed
+                    break
+                if narrowed:
+                    filtered = narrowed
+            results[name] = filtered
+
+    return results
+
+
+_CEC_MASKED_FIELDS = [
+    "avg_eval_median_weighted",
+    "avg_instructor_contribution_median_weighted",
+    "avg_instructor_effectiveness_median_weighted",
+    "avg_course_as_whole_median_weighted",
+    "avg_course_content_median_weighted",
+    "avg_amount_learned_median_weighted",
+    "avg_instructor_interest_median_weighted",
+    "avg_grading_techniques_median_weighted",
+    "cec_eval_count",
+    "cec_surveyed_count",
+    "cec_enrolled_count",
+    "cec_courses",
+]
 
 
 class BatchMatchRequest(BaseModel):
@@ -216,39 +296,14 @@ class BatchMatchRequest(BaseModel):
 @limiter.limit("30/minute")
 def match_professors_batch(request: Request, body: BatchMatchRequest):
     authenticated = verify_jwt(request) is not None
+    raw = _batch_match(body.names)
     results = {}
-    for name in body.names:
-        matches = [dict(m) for m in _match_one(name)]
+    for name, matches in raw.items():
+        profs = [dict(m) for m in matches]
         if not authenticated:
-            for prof in matches:
-                for field in [
-                    "avg_eval_median_weighted",
-                    "avg_instructor_contribution_median_weighted",
-                    "avg_instructor_effectiveness_median_weighted",
-                    "avg_course_as_whole_median_weighted",
-                    "avg_course_content_median_weighted",
-                    "avg_amount_learned_median_weighted",
-                    "avg_instructor_interest_median_weighted",
-                    "avg_grading_techniques_median_weighted",
-                    "cec_eval_count",
-                    "cec_surveyed_count",
-                    "cec_enrolled_count",
-                    "cec_courses",
-                ]:
+            for prof in profs:
+                for field in _CEC_MASKED_FIELDS:
                     prof[field] = None
                 prof["cec_locked"] = True
-        results[name] = matches
+        results[name] = profs
     return results
-
-
-@app.get("/professors/match", tags=["Professors"])
-@limiter.limit("30/minute")
-def match_professors(
-    request: Request,
-    name: str = Query(..., min_length=2),
-):
-    first, middle, last = parse_name(name)
-    if not first or not last:
-        raise HTTPException(status_code=400, detail="Could not parse a first and last name from the provided name")
-
-    return _match_one(name)

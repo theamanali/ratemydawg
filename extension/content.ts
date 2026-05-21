@@ -4,7 +4,7 @@ export const config: PlasmoCSConfig = {
   matches: ["https://myplan.uw.edu/course/*"],
 }
 
-const API_BASE = "https://api.ratemydawg.com"
+const API_BASE = process.env.PLASMO_PUBLIC_API_BASE!
 
 const cache: Record<string, Professor[]> = {}
 
@@ -358,12 +358,17 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 })
 
-let lastUrl = location.href
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
-new MutationObserver(() => {
-  if (location.href !== lastUrl) {
-    lastUrl = location.href
-    if (debounceTimer) clearTimeout(debounceTimer)
-    debounceTimer = setTimeout(() => waitForTable(matchAndInject), 500)
-  }
-}).observe(document.body, { childList: true, subtree: true })
+
+function onUrlChange() {
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => waitForTable(matchAndInject), 500)
+}
+
+// Patch history.pushState to catch SPA navigations (popstate doesn't fire for pushState)
+const _origPushState = history.pushState.bind(history)
+history.pushState = function (...args) {
+  _origPushState(...args)
+  onUrlChange()
+}
+window.addEventListener("popstate", onUrlChange)

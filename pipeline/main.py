@@ -43,7 +43,7 @@ def run_step(name, fn, *args, **kwargs):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="RateMyHusky scraper pipeline")
+    parser = argparse.ArgumentParser(description="RateMyDawg pipeline")
     parser.add_argument("--rmp",   action="store_true", help="Run RMP scraper only")
     parser.add_argument("--cec",   action="store_true", help="Run CEC scraper only (requires interactive login)")
     parser.add_argument("--clean", action="store_true", help="Run cleaner only")

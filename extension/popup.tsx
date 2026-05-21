@@ -264,6 +264,11 @@ function IndexPopup() {
       if (jwt) {
         try {
           const payload = JSON.parse(atob(jwt.split(".")[1]))
+          if (payload.exp && payload.exp * 1000 < Date.now()) {
+            chrome.storage.local.remove("jwt")
+            setAuthState("signed_out")
+            return
+          }
           setUser({ email: payload.email, name: payload.name })
           setAuthState("signed_in")
         } catch {

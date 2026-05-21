@@ -300,6 +300,7 @@ def _format_questions(questions):
 def init_db(conn):
     cur = conn.cursor()
     cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    cur.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS professors (
             id SERIAL PRIMARY KEY,
@@ -379,6 +380,15 @@ def init_db(conn):
             textbook_used BOOLEAN,
             rating_tags TEXT[]
         )
+    """)
+    cur.execute("""
+        CREATE OR REPLACE FUNCTION f_unaccent(text) RETURNS text AS
+          $func$SELECT public.unaccent('public.unaccent'::regdictionary, $1)$func$
+        LANGUAGE sql IMMUTABLE STRICT
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_professors_name
+        ON professors (f_unaccent(lower(last_name)), f_unaccent(lower(first_name)))
     """)
     conn.commit()
     cur.close()

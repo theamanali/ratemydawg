@@ -1,33 +1,50 @@
-This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with [`plasmo init`](https://www.npmjs.com/package/plasmo).
+# Extension
 
-## Getting Started
+Plasmo Chrome MV3 extension that injects professor rating badges into the UW MyPlan course registration page. Each instructor gets inline RateMyProfessors scores (Quality, Difficulty, Would Take Again) alongside UW Course Evaluation Scores. CES scores are gated behind UW sign-in via Microsoft OAuth.
 
-First, run the development server:
+## Setup
+
+```bash
+cd extension
+pnpm install
+```
+
+## Environment files
+
+Create the appropriate `.env` file before running or building:
+
+```
+# .env.development  (for pnpm dev — hits local API)
+PLASMO_PUBLIC_API_BASE=http://localhost:8000
+
+# .env.production  (for pnpm build:prod — hits production API)
+PLASMO_PUBLIC_API_BASE=https://api.ratemydawg.com
+```
+
+## Dev
 
 ```bash
 pnpm dev
-# or
-npm run dev
 ```
 
-Open your browser and load the appropriate development build. For example, if you are developing for the chrome browser, using manifest v3, use: `build/chrome-mv3-dev`.
+Load `build/chrome-mv3-dev` in `chrome://extensions` (enable Developer mode → Load unpacked).
 
-You can start editing the popup by modifying `popup.tsx`. It should auto-update as you make changes. To add an options page, simply add a `options.tsx` file to the root of the project, with a react component default exported. Likewise to add a content page, add a `content.ts` file to the root of the project, importing some module and do some logic, then reload the extension on your browser.
+Requires the local API server running at `http://localhost:8000` — see [api/README.md](../api/README.md).
 
-For further guidance, [visit our Documentation](https://docs.plasmo.com/)
+## Production build
 
-## Making production build
+Strips dev host permissions (`localhost`, Railway domain) before building:
 
-Run the following:
+```bash
+pnpm build:prod
+# output: build/chrome-mv3-prod
+```
+
+## Standard build
+
+Hits the Railway staging API, dev host permissions included:
 
 ```bash
 pnpm build
-# or
-npm run build
+# output: build/chrome-mv3-prod
 ```
-
-This should create a production bundle for your extension, ready to be zipped and published to the stores.
-
-## Submit to the webstores
-
-The easiest way to deploy your Plasmo extension is to use the built-in [bpp](https://bpp.browser.market) GitHub action. Prior to using this action however, make sure to build your extension and upload the first version to the store to establish the basic credentials. Then, simply follow [this setup instruction](https://docs.plasmo.com/framework/workflows/submit) and you should be on your way for automated submission!

@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from nameparser import HumanName
@@ -156,6 +157,55 @@ def verify_jwt(request: Request) -> dict | None:
         return jwt.decode(auth[7:], JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except Exception:
         return None
+
+
+@app.get("/privacy", tags=["Meta"], response_class=HTMLResponse, include_in_schema=False)
+def privacy():
+    return HTMLResponse("""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — RateMyDawg</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 680px; margin: 60px auto; padding: 0 24px; color: #1a1a2e; line-height: 1.7; }
+  h1 { font-size: 1.8rem; margin-bottom: 4px; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; color: #4b2e83; }
+  p, li { color: #444; }
+  a { color: #4b2e83; }
+  .updated { color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
+</style>
+</head>
+<body>
+<h1>Privacy Policy</h1>
+<p class="updated">Last updated: May 2026</p>
+
+<p>RateMyDawg is a Chrome extension that displays professor ratings from RateMyProfessors and UW Course Evaluation Scores directly in the UW MyPlan course registration page.</p>
+
+<h2>What we collect</h2>
+<p>When you sign in with your UW account, we receive your UW email address and display name from Microsoft via OAuth. These are stored as a signed JWT token in your browser's local extension storage (<code>chrome.storage.local</code>). No data is stored on any server.</p>
+
+<h2>What we do not collect</h2>
+<ul>
+  <li>Browsing history</li>
+  <li>Course selections or registration activity</li>
+  <li>Analytics or usage telemetry</li>
+  <li>Any data beyond your email and display name</li>
+</ul>
+
+<h2>How your data is used</h2>
+<p>Your UW email address is used solely to verify you are a UW student and unlock UW Course Evaluation Scores. It is never shared with third parties, sold, or used for any other purpose.</p>
+
+<h2>Data retention</h2>
+<p>Your JWT token is stored locally in your browser and expires after 30 days. You can remove it at any time by clicking Sign Out in the extension popup. Uninstalling the extension removes all stored data.</p>
+
+<h2>Third-party services</h2>
+<p>Rating data is fetched from <a href="https://www.ratemyprofessors.com">RateMyProfessors</a> and the <a href="https://www.washington.edu/cec">UW Course Evaluations Catalog</a>. No personal information is sent to either service.</p>
+
+<h2>Contact</h2>
+<p>Questions or concerns: <a href="mailto:itsamanali89@gmail.com">itsamanali89@gmail.com</a></p>
+</body>
+</html>""")
 
 
 @app.post("/auth/login", tags=["Auth"])

@@ -126,16 +126,51 @@ function createTooltip() {
     const info = TOOLTIPS[key]
     if (!info) return
     const statRaw = pill.getAttribute("data-rmd-stat")
-    let statHtml = ""
+
+    const pillBox = (pill as HTMLElement).querySelector("span:last-child") as HTMLElement | null
+    if (pillBox?.style.background) tooltip.style.setProperty("--rmd-tip-color", pillBox.style.background)
+
+    tooltip.textContent = ""
+
+    const titleEl = document.createElement("strong")
+    titleEl.textContent = info.title
+    tooltip.appendChild(titleEl)
+
     if (statRaw) {
       const { text, color } = JSON.parse(statRaw)
       const [num, ...rest] = text.split(" ")
-      statHtml = `<span style="display:block; color:rgb(33,37,41); margin-bottom:4px; font-size:1rem; font-family:'Open Sans',sans-serif;"><span style="background:${color}; border-radius:4px; padding:1px 5px; font-weight:600; color:rgb(33,37,41); margin-right:3px;">${num}</span><span>${rest.join(" ")}</span></span>`
+
+      const statEl = document.createElement("span")
+      statEl.style.cssText = "display:block; color:rgb(33,37,41); margin-bottom:4px; font-size:1rem; font-family:'Open Sans',sans-serif;"
+
+      const numEl = document.createElement("span")
+      numEl.style.cssText = `background:${color}; border-radius:4px; padding:1px 5px; font-weight:600; color:rgb(33,37,41); margin-right:3px;`
+      numEl.textContent = num
+      statEl.appendChild(numEl)
+
+      const restEl = document.createElement("span")
+      // stat text contains intentional <b> tags wrapping numbers (e.g. "from <b>42</b> reviews")
+      rest.join(" ").split(/(<b>[^<]*<\/b>)/).forEach((part, i) => {
+        if (i % 2 === 1) {
+          const b = document.createElement("b")
+          b.textContent = part.slice(3, -4)
+          restEl.appendChild(b)
+        } else if (part) {
+          restEl.appendChild(document.createTextNode(part))
+        }
+      })
+      statEl.appendChild(restEl)
+      tooltip.appendChild(statEl)
+
+      const divider = document.createElement("span")
+      divider.style.cssText = "display:block; border-top:1px solid rgba(0,0,0,0.08); margin:6px 0 5px;"
+      tooltip.appendChild(divider)
     }
-    const pillBox = (pill as HTMLElement).querySelector("span:last-child") as HTMLElement | null
-    if (pillBox?.style.background) tooltip.style.setProperty("--rmd-tip-color", pillBox.style.background)
-    const divider = statHtml ? `<span style="display:block; border-top:1px solid rgba(0,0,0,0.08); margin:6px 0 5px;"></span>` : ""
-    tooltip.innerHTML = `<strong>${info.title}</strong>${statHtml}${divider}<span style="display:block; color:rgb(90,90,90); font-size:0.875rem; font-family:'Open Sans',sans-serif;">${info.desc}</span>`
+
+    const descEl = document.createElement("span")
+    descEl.style.cssText = "display:block; color:rgb(90,90,90); font-size:0.875rem; font-family:'Open Sans',sans-serif;"
+    descEl.textContent = info.desc
+    tooltip.appendChild(descEl)
 
     // Anchor to the pill: center below, flip above if insufficient room, clamp to viewport
     const rect = (pillBox ?? pill as HTMLElement).getBoundingClientRect()
@@ -258,7 +293,22 @@ function injectBadge(el: HTMLElement, prof: Professor, animate = true) {
     const lockedPill = pill("CES", null, null, false, null)
     const lockBox = lockedPill.lastElementChild as HTMLElement
     lockBox.style.cssText = "background:rgb(235,235,235); border-radius:4px; padding:2px 5px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:18px;"
-    lockBox.innerHTML = `<svg width="9" height="10" viewBox="0 0 9 10" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="0.75" y="4" width="7.5" height="5.75" rx="1.25" fill="rgb(120,120,120)"/><path d="M2 4V2.75a2.5 2.5 0 0 1 5 0V4" stroke="rgb(120,120,120)" stroke-width="1.5" stroke-linecap="round"/></svg>`
+    const svgNS = "http://www.w3.org/2000/svg"
+    const svg = document.createElementNS(svgNS, "svg")
+    svg.setAttribute("width", "9")
+    svg.setAttribute("height", "10")
+    svg.setAttribute("viewBox", "0 0 9 10")
+    svg.setAttribute("fill", "none")
+    const rect = document.createElementNS(svgNS, "rect")
+    rect.setAttribute("x", "0.75"); rect.setAttribute("y", "4")
+    rect.setAttribute("width", "7.5"); rect.setAttribute("height", "5.75")
+    rect.setAttribute("rx", "1.25"); rect.setAttribute("fill", "rgb(120,120,120)")
+    const path = document.createElementNS(svgNS, "path")
+    path.setAttribute("d", "M2 4V2.75a2.5 2.5 0 0 1 5 0V4")
+    path.setAttribute("stroke", "rgb(120,120,120)")
+    path.setAttribute("stroke-width", "1.5"); path.setAttribute("stroke-linecap", "round")
+    svg.appendChild(rect); svg.appendChild(path)
+    lockBox.appendChild(svg)
     lockedPill.style.cursor = "pointer"
     lockedPill.title = "Sign in with your UW account to see CEC scores"
     lockedPill.addEventListener("click", () => chrome.runtime.sendMessage({ type: "OPEN_POPUP" }))

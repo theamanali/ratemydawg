@@ -8,13 +8,13 @@ const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"))
 const original = JSON.stringify(pkg, null, 2)
 
 pkg.manifest.host_permissions = pkg.manifest.host_permissions.filter(
-  (h) => !h.includes("railway") && !h.includes("localhost")
+  (h) => !h.includes("localhost")
 )
 
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
 
 try {
-  execSync("plasmo build", { stdio: "inherit" })
+  execSync("plasmo package", { stdio: "inherit" })
 } finally {
   fs.writeFileSync(pkgPath, original)
 }

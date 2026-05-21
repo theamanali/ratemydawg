@@ -1,8 +1,8 @@
 {
   "name": "extension",
-  "displayName": "Extension",
-  "version": "0.0.1",
-  "description": "A basic Plasmo extension.",
+  "displayName": "RateMyDawg",
+  "version": "1.0.0",
+  "description": "See RateMyProfessors scores and UW Course Evaluation Scores for your instructors, directly in MyPlan.",
   "author": "Aman Ali <itsamanali89@gmail.com>",
   "scripts": {
     "dev": "plasmo dev",
@@ -25,10 +25,12 @@
     "typescript": "5.3.3"
   },
   "manifest": {
+    "action": { "default_title": "RateMyDawg" },
+    "homepage_url": "https://ratemydawg.com",
+    "privacy_url": "https://ratemydawg.com/privacy",
     "host_permissions": [
       "https://myplan.uw.edu/*",
       "https://api.ratemydawg.com/*",
-      "https://ratemydawg-api.up.railway.app/*",
       "http://localhost:8000/*"
     ],
     "permissions": [

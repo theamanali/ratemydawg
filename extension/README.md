@@ -1,4 +1,4 @@
-# Extension
+# RateMyDawg Extension
 
 Plasmo Chrome MV3 extension that injects professor rating badges into the UW MyPlan course registration page. Each instructor gets inline RateMyProfessors scores (Quality, Difficulty, Would Take Again) alongside UW Course Evaluation Scores. CES scores are gated behind UW sign-in via Microsoft OAuth.
 
@@ -33,18 +33,18 @@ Requires the local API server running at `http://localhost:8000` — see [api/RE
 
 ## Production build
 
-Strips dev host permissions (`localhost`, Railway domain) before building:
+Strips dev host permissions (`localhost`), builds, and zips for store submission:
 
 ```bash
 pnpm build:prod
-# output: build/chrome-mv3-prod
+# output: build/chrome-mv3-prod.zip
 ```
 
 ## Standard build
 
-Hits the Railway staging API, dev host permissions included:
+Hits the production API (`api.ratemydawg.com`), localhost permission included:
 
 ```bash
 pnpm build
-# output: build/chrome-mv3-prod
+# output: build/chrome-mv3-dev
 ```

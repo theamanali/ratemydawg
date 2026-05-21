@@ -3,7 +3,7 @@
   "displayName": "RateMyDawg",
   "version": "1.0.0",
   "description": "See RateMyProfessors scores and UW Course Evaluation Scores for your instructors, directly in MyPlan.",
-  "author": "Aman Ali <itsamanali89@gmail.com>",
+  "author": "RateMyDawg <woof@ratemydawg.com>",
   "scripts": {
     "dev": "plasmo dev",
     "build": "plasmo build",
@@ -26,7 +26,6 @@
   },
   "manifest": {
     "action": { "default_title": "RateMyDawg" },
-    "homepage_url": "https://ratemydawg.com",
     "privacy_url": "https://ratemydawg.com/privacy",
     "host_permissions": [
       "https://myplan.uw.edu/*",

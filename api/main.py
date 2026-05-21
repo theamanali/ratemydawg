@@ -203,7 +203,7 @@ def privacy():
 <p>Rating data is fetched from <a href="https://www.ratemyprofessors.com">RateMyProfessors</a> and the <a href="https://www.washington.edu/cec">UW Course Evaluations Catalog</a>. No personal information is sent to either service.</p>
 
 <h2>Contact</h2>
-<p>Questions or concerns: <a href="mailto:itsamanali89@gmail.com">itsamanali89@gmail.com</a></p>
+<p>Questions or concerns: <a href="mailto:hello@ratemydawg.com">hello@ratemydawg.com</a></p>
 </body>
 </html>""")
 

@@ -139,27 +139,35 @@ function createTooltip() {
     if (statRaw) {
       const { text, color } = JSON.parse(statRaw)
       const [num, ...rest] = text.split(" ")
+      const isNumeric = /^-?\d/.test(num)
 
       const statEl = document.createElement("span")
       statEl.style.cssText = "display:block; color:rgb(33,37,41); margin-bottom:4px; font-size:1rem; font-family:'Open Sans',sans-serif;"
 
-      const numEl = document.createElement("span")
-      numEl.style.cssText = `background:${color}; border-radius:4px; padding:1px 5px; font-weight:600; color:rgb(33,37,41); margin-right:3px;`
-      numEl.textContent = num
-      statEl.appendChild(numEl)
+      if (isNumeric) {
+        const numEl = document.createElement("span")
+        numEl.style.cssText = `background:${color}; border-radius:4px; padding:1px 5px; font-weight:600; color:rgb(33,37,41); margin-right:3px;`
+        numEl.textContent = num
+        statEl.appendChild(numEl)
 
-      const restEl = document.createElement("span")
-      // stat text contains intentional <b> tags wrapping numbers (e.g. "from <b>42</b> reviews")
-      rest.join(" ").split(/(<b>[^<]*<\/b>)/).forEach((part, i) => {
-        if (i % 2 === 1) {
-          const b = document.createElement("b")
-          b.textContent = part.slice(3, -4)
-          restEl.appendChild(b)
-        } else if (part) {
-          restEl.appendChild(document.createTextNode(part))
-        }
-      })
-      statEl.appendChild(restEl)
+        const restEl = document.createElement("span")
+        // stat text contains intentional <b> tags wrapping numbers (e.g. "from <b>42</b> reviews")
+        rest.join(" ").split(/(<b>[^<]*<\/b>)/).forEach((part, i) => {
+          if (i % 2 === 1) {
+            const b = document.createElement("b")
+            b.textContent = part.slice(3, -4)
+            restEl.appendChild(b)
+          } else if (part) {
+            restEl.appendChild(document.createTextNode(part))
+          }
+        })
+        statEl.appendChild(restEl)
+      } else {
+        statEl.style.color = "rgb(120,120,120)"
+        statEl.style.fontStyle = "italic"
+        statEl.textContent = text
+      }
+
       tooltip.appendChild(statEl)
 
       const divider = document.createElement("span")
@@ -226,8 +234,7 @@ function pill(
   const box = document.createElement("span")
   const isNA = bg === "rgb(180,180,180)"
   const shouldAnimate = animate && !isNA
-  const naStyles = isNA ? " border:1.5px dashed rgb(180,180,180); background:transparent; color:rgb(160,160,160);" : ""
-  box.style.cssText = `background:${shouldAnimate ? "rgb(255,0,20)" : (isNA ? "transparent" : bg)}; border-radius:4px; padding:2px 5px; color:${isNA ? "rgb(160,160,160)" : "rgb(33,37,41)"}; font-weight:600; display:inline-block; line-height:1;${naStyles}${shouldAnimate ? " transition:background 0.6s ease;" : ""}`
+  box.style.cssText = `background:${shouldAnimate ? "rgb(255,0,20)" : (isNA ? "rgb(235,235,235)" : bg)}; border-radius:4px; padding:2px 5px; color:${isNA ? "rgb(160,160,160)" : "rgb(33,37,41)"}; font-weight:600; display:inline-block; line-height:1;${shouldAnimate ? " transition:background 0.6s ease;" : ""}`
   box.textContent = shouldAnimate ? (text.endsWith("%") ? "0%" : "0.0") : text
 
   if (shouldAnimate) {
@@ -278,19 +285,21 @@ function injectBadge(el: HTMLElement, prof: Professor, animate = true) {
 
   const { avg_quality_rating: qr, avg_difficulty_rating: dr, would_take_again_percent: wta, avg_eval_median_weighted: ces, rmp_rating_count: rmpCount, cec_surveyed_count: cecCount, cec_eval_count: cecEvals } = prof
 
-  const rmpSuffix = rmpCount ? ` from <b>${rmpCount}</b> reviews` : ""
-  const cecSuffix = cecCount && cecEvals ? ` calculated from <b>${cecCount}</b> surveys across <b>${cecEvals}</b> sections` : ""
+  const pl = (n: number, word: string) => `<b>${n}</b> ${word}${n === 1 ? "" : "s"}`
+  const rmpSuffix = rmpCount ? ` from ${pl(rmpCount, "review")}` : ""
+  const cecSuffix = cecCount && cecEvals ? ` calculated from ${pl(cecCount, "survey")} across ${pl(cecEvals, "section")}` : ""
 
-  badge.appendChild(pill("QR", qr != null ? qr.toFixed(1) : null, qr != null ? ratingColor(qr) : null, animate, qr != null ? `${qr.toFixed(1)} calculated${rmpSuffix}` : null))
-  badge.appendChild(pill("DR", dr != null ? dr.toFixed(1) : null, dr != null ? ratingColor(dr, true) : null, animate, dr != null ? `${dr.toFixed(1)} calculated${rmpSuffix}` : null))
-  badge.appendChild(pill("WTA", wta != null ? `${wta.toFixed(0)}%` : null, wta != null ? ratingColor(wta, false, 0, 100) : null, animate, wta != null ? `${wta.toFixed(0)}% of <b>${rmpCount}</b> reviewers would take again` : null))
+  const noRmp = "No reviews found on RateMyProfessors"
+  badge.appendChild(pill("QR", qr != null ? qr.toFixed(1) : null, qr != null ? ratingColor(qr) : null, animate, qr != null ? `${qr.toFixed(1)} calculated${rmpSuffix}` : noRmp))
+  badge.appendChild(pill("DR", dr != null ? dr.toFixed(1) : null, dr != null ? ratingColor(dr, true) : null, animate, dr != null ? `${dr.toFixed(1)} calculated${rmpSuffix}` : noRmp))
+  badge.appendChild(pill("WTA", wta != null ? `${wta.toFixed(0)}%` : null, wta != null ? ratingColor(wta, false, 0, 100) : null, animate, wta != null ? `${wta.toFixed(0)}% of ${pl(rmpCount!, "reviewer")} would take again` : noRmp))
 
   const sep = document.createElement("span")
   sep.style.cssText = "width:1px; height:1em; background:rgba(0,0,0,0.12); border-radius:1px; margin:0 1px; flex-shrink:0; align-self:center;"
   badge.appendChild(sep)
 
   if (prof.cec_locked) {
-    const lockedPill = pill("CES", null, null, false, null)
+    const lockedPill = pill("CES", null, null, false, "Sign in with your UW account to view CES")
     const lockBox = lockedPill.lastElementChild as HTMLElement
     lockBox.style.cssText = "background:rgb(235,235,235); border-radius:4px; padding:2px 5px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:18px;"
     const svgNS = "http://www.w3.org/2000/svg"
@@ -308,13 +317,13 @@ function injectBadge(el: HTMLElement, prof: Professor, animate = true) {
     path.setAttribute("stroke", "rgb(120,120,120)")
     path.setAttribute("stroke-width", "1.5"); path.setAttribute("stroke-linecap", "round")
     svg.appendChild(rect); svg.appendChild(path)
+    lockBox.textContent = ""
     lockBox.appendChild(svg)
     lockedPill.style.cursor = "pointer"
-    lockedPill.title = "Sign in with your UW account to see CEC scores"
     lockedPill.addEventListener("click", () => chrome.runtime.sendMessage({ type: "OPEN_POPUP" }))
     badge.appendChild(lockedPill)
   } else {
-    badge.appendChild(pill("CES", ces != null ? ces.toFixed(1) : null, ces != null ? ratingColor(ces, false, 0, 5) : null, animate, ces != null ? `${ces.toFixed(1)}${cecSuffix}` : null))
+    badge.appendChild(pill("CES", ces != null ? ces.toFixed(1) : null, ces != null ? ratingColor(ces, false, 0, 5) : null, animate, ces != null ? `${ces.toFixed(1)}${cecSuffix}` : "No CEC evaluations found for this professor"))
   }
 
   el.appendChild(badge)

@@ -14,7 +14,8 @@ pkg.manifest.host_permissions = pkg.manifest.host_permissions.filter(
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
 
 try {
-  execSync("plasmo package", { stdio: "inherit" })
+  execSync("pnpm exec plasmo build", { stdio: "inherit" })
+  execSync("pnpm exec plasmo package", { stdio: "inherit" })
 } finally {
   fs.writeFileSync(pkgPath, original)
 }

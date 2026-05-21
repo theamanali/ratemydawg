@@ -15,6 +15,8 @@ async function refreshJwtIfNeeded(): Promise<void> {
     if (res.ok) {
       const { token } = await res.json()
       await chrome.storage.local.set({ jwt: token })
+    } else if (res.status === 401) {
+      await chrome.storage.local.remove("jwt")
     }
   } catch {}
 }

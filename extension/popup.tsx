@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react"
 
+import brandUrl from "data-base64:~assets/logomark_and_wordmark.svg"
+
 type AuthState = "loading" | "signed_out" | "signed_in"
 
 interface UserInfo {
@@ -8,112 +10,75 @@ interface UserInfo {
 }
 
 const POPUP_CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&display=swap');
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { margin: 0; }
 
+:root {
+  --ink: #15101e;
+  --ink-soft: #5a4d6b;
+  --bg: #faf7f0;
+  --rule: #ece4d2;
+  --purple: #4b2e83;
+  --gold: #ffc700;
+  --danger: #b91c1c;
+}
+
 .rmd {
-  width: 300px;
-  font-family: 'Outfit', 'Segoe UI', sans-serif;
-  background: #fff;
-  color: #1a1a2e;
+  width: 280px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Bricolage Grotesque', system-ui, sans-serif;
+  font-feature-settings: "ss01";
 }
 
-.rmd-header {
-  background: #4b2e83;
-  padding: 18px 20px 16px;
-  position: relative;
-  overflow: hidden;
+/* ---- brand area ---- */
+.rmd-brand-area {
+  padding: 22px 20px 16px;
 }
-.rmd-header::after {
-  content: '';
-  position: absolute;
-  bottom: -28px;
-  right: -16px;
-  width: 90px;
-  height: 90px;
-  border-radius: 50%;
-  background: rgba(201,162,39,0.12);
-  pointer-events: none;
+.rmd-brand {
+  display: block;
+  width: 86%;
+  height: auto;
+  margin: 0 auto;
 }
-.rmd-logo {
-  font-size: 21px;
-  font-weight: 700;
-  color: #fff;
-  letter-spacing: -0.4px;
-  line-height: 1;
-  position: relative;
-}
-.rmd-logo-dot { color: #c9a227; }
-.rmd-tagline {
-  font-size: 10.5px;
-  color: rgba(255,255,255,0.55);
-  font-weight: 400;
-  margin-top: 5px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  position: relative;
+.rmd-divider {
+  width: 32px;
+  height: 1px;
+  background: var(--purple);
+  opacity: 0.28;
+  margin: 16px auto 0;
 }
 
-.rmd-body { padding: 18px 20px 22px; }
+/* ---- body ---- */
+.rmd-body { padding: 8px 22px 22px; }
 
-.rmd-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 22px 0;
-}
-.rmd-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #4b2e83;
-  opacity: 0.3;
-  animation: rmd-bounce 1.1s ease-in-out infinite;
-}
-.rmd-dot:nth-child(2) { animation-delay: 0.18s; }
-.rmd-dot:nth-child(3) { animation-delay: 0.36s; }
-@keyframes rmd-bounce {
-  0%, 80%, 100% { opacity: 0.3; transform: scale(0.7); }
-  40% { opacity: 1; transform: scale(1); }
-}
-
-.rmd-uw-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: rgba(75,46,131,0.07);
-  border: 1px solid rgba(75,46,131,0.18);
-  color: #4b2e83;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 3px 8px;
-  border-radius: 999px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  margin-bottom: 12px;
-}
-.rmd-uw-badge::before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #4b2e83;
-  flex-shrink: 0;
+.rmd-headline {
+  font-family: 'Bricolage Grotesque', sans-serif;
+  font-variation-settings: 'wght' 700, 'opsz' 60;
+  font-size: 22px;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin-bottom: 8px;
 }
 
 .rmd-desc {
   font-size: 12.5px;
-  color: #6b6b80;
-  line-height: 1.6;
+  font-weight: 400;
+  color: var(--ink-soft);
+  line-height: 1.55;
   margin-bottom: 16px;
 }
 .rmd-desc strong {
-  color: #1a1a2e;
+  color: var(--ink);
   font-weight: 600;
+  background: linear-gradient(transparent 68%, var(--gold) 68%, var(--gold) 92%, transparent 92%);
+  padding: 0 1px;
 }
 
+/* ---- Microsoft button ---- */
 .rmd-msft-btn {
   display: block;
   width: 100%;
@@ -126,7 +91,7 @@ body { margin: 0; }
   transition: opacity 0.15s, transform 0.12s;
 }
 .rmd-msft-btn:hover:not(:disabled) { opacity: 0.92; transform: translateY(-1px); }
-.rmd-msft-btn:active:not(:disabled) { transform: translateY(0); opacity: 0.82; }
+.rmd-msft-btn:active:not(:disabled) { transform: translateY(0); }
 .rmd-msft-btn:disabled { opacity: 0.5; cursor: default; }
 .rmd-msft-btn svg { display: block; width: 100%; height: auto; }
 
@@ -134,122 +99,118 @@ body { margin: 0; }
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  font-size: 12px;
-  color: #999;
-  margin-top: 9px;
-  font-weight: 400;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  margin-top: 12px;
 }
 .rmd-spinner {
   width: 10px;
   height: 10px;
-  border: 1.5px solid rgba(0,0,0,0.12);
-  border-top-color: #4b2e83;
+  border: 1.5px solid rgba(21, 16, 30, 0.15);
+  border-top-color: var(--purple);
   border-radius: 50%;
   animation: rmd-spin 0.65s linear infinite;
-  flex-shrink: 0;
 }
 @keyframes rmd-spin { to { transform: rotate(360deg); } }
 
 .rmd-error {
   font-size: 12px;
-  color: #b91c1c;
-  margin-top: 10px;
-  padding: 8px 10px;
-  background: rgba(185,28,28,0.05);
-  border-radius: 6px;
-  border-left: 2px solid #b91c1c;
-  line-height: 1.4;
+  margin-top: 12px;
+  padding: 9px 11px;
+  background: rgba(185, 28, 28, 0.06);
+  border-left: 3px solid var(--danger);
+  color: #7a1717;
+  line-height: 1.45;
 }
 
-.rmd-user-row {
+/* ---- loading ---- */
+.rmd-loading {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-.rmd-avatar {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: #4b2e83;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  letter-spacing: -0.3px;
+  gap: 6px;
+  padding: 28px 0;
 }
-.rmd-user-meta { min-width: 0; }
+.rmd-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--purple);
+  opacity: 0.35;
+  animation: rmd-bounce 1.1s ease-in-out infinite;
+}
+.rmd-dot:nth-child(2) { background: var(--gold); animation-delay: 0.18s; }
+.rmd-dot:nth-child(3) { animation-delay: 0.36s; }
+@keyframes rmd-bounce {
+  0%, 80%, 100% { opacity: 0.35; transform: scale(0.7); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+/* ---- signed-in ---- */
 .rmd-user-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1a1a2e;
+  font-family: 'Bricolage Grotesque', sans-serif;
+  font-variation-settings: 'wght' 700, 'opsz' 48;
+  font-size: 20px;
+  line-height: 1.08;
+  letter-spacing: -0.018em;
+  color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  margin-bottom: 3px;
 }
 .rmd-user-email {
-  font-size: 11.5px;
-  color: #9999aa;
-  font-weight: 400;
-  margin-top: 1px;
+  font-size: 12px;
+  color: var(--ink-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  margin-bottom: 14px;
 }
 
-.rmd-active-status {
+.rmd-status {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 11.5px;
-  color: #15803d;
-  font-weight: 500;
-  background: rgba(21,128,61,0.07);
-  border-radius: 7px;
-  padding: 7px 10px;
+  gap: 9px;
+  font-size: 12px;
+  color: var(--ink);
+  padding: 8px 11px;
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--gold);
+  border-radius: 3px;
   margin-bottom: 14px;
 }
 .rmd-status-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #15803d;
-  flex-shrink: 0;
-  animation: rmd-pulse 2.2s ease-in-out infinite;
+  background: var(--gold);
+  box-shadow: 0 0 0 3px rgba(255, 199, 0, 0.24);
+  animation: rmd-pulse 2s ease-in-out infinite;
 }
 @keyframes rmd-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-
-.rmd-divider {
-  border: none;
-  border-top: 1px solid #f0f0f4;
-  margin: 0 0 14px;
+  0%, 100% { box-shadow: 0 0 0 3px rgba(255, 199, 0, 0.28); }
+  50%      { box-shadow: 0 0 0 6px rgba(255, 199, 0, 0.04); }
 }
 
 .rmd-signout {
   width: 100%;
   padding: 8px 12px;
-  border-radius: 7px;
-  border: 1px solid #e4e4ea;
-  background: #fff;
-  color: #777;
+  border-radius: 6px;
+  border: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: inherit;
   font-size: 12.5px;
   font-weight: 500;
-  font-family: inherit;
   cursor: pointer;
-  letter-spacing: 0.01em;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .rmd-signout:hover {
-  border-color: #dc2626;
-  color: #dc2626;
-  background: rgba(220,38,38,0.04);
+  color: var(--danger);
+  border-color: var(--danger);
+  background: rgba(185, 28, 28, 0.04);
 }
 `
 
@@ -309,18 +270,15 @@ function IndexPopup() {
     chrome.runtime.sendMessage({ type: "REFRESH_TABS" })
   }
 
-  const initials = user?.name
-    ? user.name.split(" ").filter(Boolean).map(n => n[0]).slice(0, 2).join("").toUpperCase()
-    : "?"
-
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: POPUP_CSS }} />
       <div className="rmd">
-        <div className="rmd-header">
-          <div className="rmd-logo">RateMyDawg<span className="rmd-logo-dot">.</span></div>
-          <div className="rmd-tagline">UW Professor Ratings</div>
+        <div className="rmd-brand-area">
+          <img src={brandUrl} className="rmd-brand" alt="RateMyDawg" />
+          <div className="rmd-divider" />
         </div>
+
         <div className="rmd-body">
           {authState === "loading" && (
             <div className="rmd-loading">
@@ -332,9 +290,9 @@ function IndexPopup() {
 
           {authState === "signed_out" && (
             <>
-              <div className="rmd-uw-badge">UW Students Only</div>
+              <h2 className="rmd-headline">Sign in to get started.</h2>
               <p className="rmd-desc">
-                Sign in with your UW account to unlock{" "}
+                Use your UW account to unlock{" "}
                 <strong>Course Evaluation Scores</strong> alongside RateMyProfessors data.
               </p>
               <button
@@ -349,7 +307,7 @@ function IndexPopup() {
               {signing && (
                 <div className="rmd-signing">
                   <div className="rmd-spinner" />
-                  Opening Microsoft sign-in…
+                  Opening Microsoft…
                 </div>
               )}
               {error && <div className="rmd-error">{error}</div>}
@@ -358,21 +316,12 @@ function IndexPopup() {
 
           {authState === "signed_in" && user && (
             <>
-              <div className="rmd-user-row">
-                <div className="rmd-avatar">{initials}</div>
-                <div className="rmd-user-meta">
-                  <div className="rmd-user-name">{user.name}</div>
-                  <div className="rmd-user-email">{user.email}</div>
-                </div>
-              </div>
-              <div className="rmd-active-status">
+              <div className="rmd-user-name">{user.name}</div>
+              <div className="rmd-user-email">{user.email}</div>
+              <div className="rmd-status">
                 <div className="rmd-status-dot" />
-                Active on MyPlan — ratings are live
+                Live on MyPlan
               </div>
-              <p className="rmd-desc" style={{marginBottom: "14px"}}>
-                Ratings appear on any course page in MyPlan. Hover a badge to see details.
-              </p>
-              <hr className="rmd-divider" />
               <button className="rmd-signout" onClick={handleSignOut}>
                 Sign out
               </button>

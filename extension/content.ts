@@ -234,7 +234,8 @@ function pill(
   const box = document.createElement("span")
   const isNA = bg === "rgb(180,180,180)"
   const shouldAnimate = animate && !isNA
-  box.style.cssText = `background:${shouldAnimate ? "rgb(255,0,20)" : (isNA ? "rgb(235,235,235)" : bg)}; border-radius:4px; padding:2px 5px; color:${isNA ? "rgb(160,160,160)" : "rgb(33,37,41)"}; font-weight:600; display:inline-block; line-height:1;${shouldAnimate ? " transition:background 0.6s ease;" : ""}`
+  const boxMinWidth = key === "WTA" ? 44 : 32
+  box.style.cssText = `background:${shouldAnimate ? "rgb(255,0,20)" : (isNA ? "rgb(235,235,235)" : bg)}; border-radius:4px; padding:2px 5px; color:${isNA ? "rgb(160,160,160)" : "rgb(33,37,41)"}; font-weight:600; display:inline-block; line-height:1; min-width:${boxMinWidth}px; text-align:center; box-sizing:border-box;${shouldAnimate ? " transition:background 0.6s ease;" : ""}`
   box.textContent = shouldAnimate ? (text.endsWith("%") ? "0%" : "0.0") : text
 
   if (shouldAnimate) {
@@ -278,7 +279,7 @@ function injectBadge(el: HTMLElement, prof: Professor, animate = true) {
   const badge = document.createElement("div")
   badge.className = "rmd-badge"
   badge.style.cssText =
-    "display:flex; gap:4px; align-items:center; flex-wrap:nowrap; margin-top:0; opacity:0; transition:opacity 0.1s ease;"
+    "display:flex; gap:2px; align-items:center; justify-content:flex-start; flex-wrap:nowrap; margin-top:0; opacity:0; transition:opacity 0.1s ease;"
   requestAnimationFrame(() => {
     requestAnimationFrame(() => { badge.style.opacity = "1" })
   })
@@ -301,7 +302,7 @@ function injectBadge(el: HTMLElement, prof: Professor, animate = true) {
   if (prof.cec_locked) {
     const lockedPill = pill("CES", null, null, false, "Sign in with your UW account to view CES")
     const lockBox = lockedPill.lastElementChild as HTMLElement
-    lockBox.style.cssText = "background:rgb(235,235,235); border-radius:4px; padding:2px 5px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:18px;"
+    lockBox.style.cssText = "background:rgb(235,235,235); border-radius:4px; padding:2px 5px; display:inline-flex; align-items:center; justify-content:center; min-width:32px; height:18px; box-sizing:border-box;"
     const svgNS = "http://www.w3.org/2000/svg"
     const svg = document.createElementNS(svgNS, "svg")
     svg.setAttribute("width", "9")
@@ -350,13 +351,14 @@ async function matchAndInject() {
   if (uncached.length) {
     try {
       const { jwt } = await chrome.storage.local.get("jwt")
-      const headers: Record<string, string> = { "Content-Type": "application/json" }
+      const headers: Record<string, string> = {}
       if (jwt) headers["Authorization"] = `Bearer ${jwt}`
 
-      const res = await fetch(`${API_BASE}/professors/match/batch`, {
-        method: "POST",
+      const params = new URLSearchParams()
+      uncached.forEach((n) => params.append("names", n))
+      const res = await fetch(`${API_BASE}/professors/match/batch?${params}`, {
+        method: "GET",
         headers,
-        body: JSON.stringify({ names: uncached }),
       })
       if (res.ok) {
         const data = await res.json()

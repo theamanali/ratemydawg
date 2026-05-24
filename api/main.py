@@ -167,13 +167,20 @@ def privacy():
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Privacy Policy — RateMyDawg</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&display=swap" rel="stylesheet">
 <style>
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 680px; margin: 60px auto; padding: 0 24px; color: #1a1a2e; line-height: 1.7; }
-  h1 { font-size: 1.8rem; margin-bottom: 4px; }
-  h2 { font-size: 1.1rem; margin-top: 2rem; color: #4b2e83; }
-  p, li { color: #444; }
-  a { color: #4b2e83; }
-  .updated { color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
+  :root { --ink: #15101e; --ink-soft: #5a4d6b; --bg: #faf7f0; --purple: #4b2e83; --gold: #ffc700; }
+  body { font-family: 'Bricolage Grotesque', system-ui, sans-serif; max-width: 680px; margin: 60px auto; padding: 0 24px; background: var(--bg); color: var(--ink); line-height: 1.7; }
+  h1 { font-variation-settings: 'wght' 700, 'opsz' 96; font-size: 2.2rem; letter-spacing: -0.02em; margin-bottom: 4px; }
+  h1::after { content: ''; display: block; width: 36px; height: 2px; background: var(--gold); margin-top: 12px; }
+  h2 { font-variation-settings: 'wght' 600, 'opsz' 48; font-size: 1.15rem; margin-top: 2.25rem; color: var(--purple); letter-spacing: -0.01em; }
+  p, li { color: var(--ink-soft); }
+  a { color: var(--purple); text-decoration: underline; text-decoration-color: rgba(255, 199, 0, 0.7); text-decoration-thickness: 2px; text-underline-offset: 2px; transition: text-decoration-color 0.15s; }
+  a:hover { text-decoration-color: var(--gold); }
+  code { background: rgba(75, 46, 131, 0.08); padding: 1px 5px; border-radius: 3px; font-size: 0.92em; color: var(--purple); }
+  .updated { color: #8a8294; font-size: 0.9rem; margin-top: 20px; margin-bottom: 2.5rem; letter-spacing: 0.02em; }
 </style>
 </head>
 <body>
@@ -338,15 +345,11 @@ _CEC_MASKED_FIELDS = [
 ]
 
 
-class BatchMatchRequest(BaseModel):
-    names: list[str]
-
-
-@app.post("/professors/match/batch", tags=["Professors"])
+@app.get("/professors/match/batch", tags=["Professors"])
 @limiter.limit("30/minute")
-def match_professors_batch(request: Request, body: BatchMatchRequest):
+def match_professors_batch(request: Request, names: list[str] = Query(...)):
     authenticated = verify_jwt(request) is not None
-    raw = _batch_match(body.names)
+    raw = _batch_match(names)
     results = {}
     for name, matches in raw.items():
         profs = [dict(m) for m in matches]

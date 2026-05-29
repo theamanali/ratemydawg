@@ -10,10 +10,14 @@ Hosted on Railway, proxied through Cloudflare at `api.ratemydawg.com`.
 DATABASE_URL          PostgreSQL connection string
 AZURE_CLIENT_ID       Azure AD app client ID
 AZURE_TENANT_ID       Azure AD tenant (e.g. uw.edu)
-AZURE_KEY_PATH        Path to private key PEM file
-AZURE_CERT_PATH       Path to certificate PEM file
+AZURE_KEY_PATH        Path to private key PEM file  (use this or AZURE_PRIVATE_KEY)
+AZURE_PRIVATE_KEY     Raw private key PEM content   (use this or AZURE_KEY_PATH)
+AZURE_CERT_PATH       Path to certificate PEM file  (use this or AZURE_CERT)
+AZURE_CERT            Raw certificate PEM content   (use this or AZURE_CERT_PATH)
 JWT_SECRET            Secret for signing JWTs
 TRUSTED_PROXY=1       Set this on Railway — enables CF-Connecting-IP for rate limiting
+CORS_ORIGINS          Comma-separated allowed origins (default: https://myplan.uw.edu)
+CORS_ORIGIN_REGEX     Regex for allowed origins (default: chrome-extension://.*)
 ```
 
 ## Local dev
